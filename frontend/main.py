@@ -63,7 +63,6 @@ st.markdown("""
 def get_location_by_ip():
     """Detectar localização aproximada pelo IP"""
     try:
-        # Usando ipapi.co (gratuito, sem API key)
         response = requests.get("https://ipapi.co/json/", timeout=5)
         if response.status_code == 200:
             data = response.json()
@@ -83,7 +82,6 @@ def get_location_by_ip():
 def get_location_name(lat, lon):
     """Obter nome da cidade/região baseado em coordenadas"""
     try:
-        # Usando API de geocoding reverso (OpenStreetMap - gratuita)
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
         headers = {'User-Agent': 'TerraSynapse/1.0'}
         
@@ -92,7 +90,6 @@ def get_location_name(lat, lon):
             data = response.json()
             address = data.get('address', {})
             
-            # Tentar extrair cidade/município
             city = (address.get('city') or 
                    address.get('town') or 
                    address.get('village') or 
@@ -155,7 +152,7 @@ CIDADES_BRASIL = {
 def main():
     # Inicializar session state
     if 'latitude' not in st.session_state:
-        st.session_state.latitude = -15.794200  # Default: Brasília
+        st.session_state.latitude = -15.794200
     if 'longitude' not in st.session_state:
         st.session_state.longitude = -47.882200
     if 'location_name' not in st.session_state:
@@ -185,7 +182,6 @@ def main():
     with st.sidebar:
         st.title("🎛️ Controles")
         
-        # Status do sistema
         if backend_online:
             st.success("🟢 Sistema Online")
         else:
@@ -201,7 +197,6 @@ def main():
         # Seção de localização
         st.subheader("📍 Localização")
         
-        # Opções de localização
         opcao_localizacao = st.radio(
             "Como definir a localização:",
             ["🏙️ Selecionar Cidade", "🌐 Detectar por IP", "📍 Inserir Coordenadas"]
@@ -263,17 +258,14 @@ def main():
                     key="lon_input"
                 )
             
-            # Atualizar coordenadas se mudaram
             if latitude_input != st.session_state.latitude or longitude_input != st.session_state.longitude:
                 st.session_state.latitude = latitude_input
                 st.session_state.longitude = longitude_input
                 st.session_state.location_accuracy = "manual"
                 
-                # Atualizar nome da localização
                 with st.spinner("🔍 Obtendo informações da localização..."):
                     st.session_state.location_name = get_location_name(latitude_input, longitude_input)
             
-            # Botão para atualizar localização
             if st.button("🔄 Atualizar Nome da Localização", key="update_location"):
                 with st.spinner("🔍 Atualizando localização..."):
                     st.session_state.location_name = get_location_name(
@@ -282,7 +274,6 @@ def main():
                     )
                 st.success("✅ Localização atualizada!")
         
-        # Mostrar localização atual
         st.markdown("---")
         st.info(f"📍 **Localização Atual:**\n{st.session_state.location_name}")
         st.caption(f"Precisão: {st.session_state.location_accuracy}")
@@ -290,7 +281,6 @@ def main():
         
         st.divider()
         
-        # Cultura
         cultura = st.selectbox(
             "🌾 Cultura Principal",
             ["soja", "milho", "trigo", "café", "algodão"]
@@ -298,7 +288,6 @@ def main():
         
         st.divider()
         
-        # Controles
         if st.button("🔄 Atualizar Dados", key="refresh_button"):
             st.rerun()
         
@@ -310,23 +299,19 @@ def main():
     with tab1:
         st.header("📊 Dashboard Geral")
         
-        # Mostrar informações da localização
         col_info1, col_info2 = st.columns(2)
         with col_info1:
             st.info(f"🏡 **Fazenda:** {fazenda_nome}")
         with col_info2:
             st.info(f"📍 **Localização:** {st.session_state.location_name}")
         
-        # Métricas principais em tempo real
         col1, col2, col3, col4 = st.columns(4)
         
-        # Dados simulados baseados na localização (mais realistas baseado em coordenadas)
         import random
         import numpy as np
         
-        # Ajustar temperatura baseado na latitude (mais ao sul = mais frio)
         lat = st.session_state.latitude
-        temp_base = 25 - (abs(lat) - 15) * 0.5  # Ajuste baseado na distância do equador
+        temp_base = 25 - (abs(lat) - 15) * 0.5
         temp_atual = round(temp_base + random.uniform(-3, 8), 1)
         
         umidade_atual = round(55 + random.uniform(-15, 25), 1)
@@ -365,10 +350,8 @@ def main():
                 help="Saúde da vegetação"
             )
 
-        # Sistema de alertas inteligente
         st.subheader("🚨 Alertas do Sistema")
         
-        # Lógica de alertas baseada nos dados
         alertas = []
         
         if temp_atual > 28:
@@ -400,13 +383,11 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Gráficos em tempo real
         st.subheader("📊 Tendências (Últimos 30 Dias)")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Gráfico de temperatura
             dias = pd.date_range(start=datetime.now() - timedelta(days=30), periods=30, freq='D')
             temp_data = pd.DataFrame({
                 'Data': dias,
@@ -425,10 +406,9 @@ def main():
                 yaxis_title="Temperatura (°C)",
                 hovermode='x unified'
             )
-            st.plotly_chart(fig_temp, use_container_width=True)
+            st.plotly_chart(fig_temp, width='stretch')
         
         with col2:
-            # Gráfico de umidade do solo
             umidade_data = pd.DataFrame({
                 'Data': dias,
                 'Umidade': [umidade_atual + random.uniform(-10, 10) for _ in range(30)]
@@ -446,9 +426,8 @@ def main():
                 yaxis_title="Umidade (%)",
                 hovermode='x unified'
             )
-            st.plotly_chart(fig_umidade, use_container_width=True)
+            st.plotly_chart(fig_umidade, width='stretch')
 
-        # Mapa da fazenda com localização atual
         st.subheader("🗺️ Localização da Fazenda")
         
         mapa_data = pd.DataFrame({
@@ -458,8 +437,6 @@ def main():
         })
         
         st.map(mapa_data, zoom=12)
-        
-        # Coordenadas exatas
         st.caption(f"📍 Coordenadas: {st.session_state.latitude:.6f}, {st.session_state.longitude:.6f}")
 
     with tab2:
@@ -470,10 +447,8 @@ def main():
         else:
             st.info("📡 Modo demo - dados simulados para sua localização")
         
-        # Mostrar localização para contexto
         st.info(f"📍 Dados climáticos para: **{st.session_state.location_name}**")
         
-        # Condições atuais
         st.subheader("📊 Condições Atuais")
         
         col1, col2, col3, col4 = st.columns(4)
@@ -487,7 +462,6 @@ def main():
         with col4:
             st.metric("🌅 UV Index", f"{random.randint(3, 11)}")
         
-        # Previsão 7 dias
         st.subheader("📅 Previsão 7 Dias")
         
         previsao_data = []
@@ -503,7 +477,7 @@ def main():
             })
         
         previsao_df = pd.DataFrame(previsao_data)
-        st.dataframe(previsao_df, use_container_width=True)
+        st.dataframe(previsao_df, width='stretch')
 
     with tab3:
         st.header("🛰️ Dados de Satélite")
@@ -513,26 +487,122 @@ def main():
         else:
             st.info("📡 Modo demo - imagens simuladas")
         
-        # Mostrar coordenadas para contexto
         st.info(f"📍 Dados de satélite para: **{st.session_state.latitude:.4f}, {st.session_state.longitude:.4f}**")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🌍 Imagem RGB")
-            st.image("https://via.placeholder.com/400x300/228B22/FFFFFF?text=RGB+Satellite+View", 
-                    caption=f"Vista RGB - {st.session_state.location_name}")
+            st.subheader("🌍 Vista de Satélite")
+            try:
+                lat = st.session_state.latitude
+                lon = st.session_state.longitude
+                
+                mapa_satelite = pd.DataFrame({
+                    'lat': [lat],
+                    'lon': [lon],
+                    'size': [100]
+                })
+                
+                st.map(mapa_satelite, zoom=15, size_col='size')
+                
+                col_info1, col_info2 = st.columns(2)
+                with col_info1:
+                    st.metric("📍 Latitude", f"{lat:.6f}°")
+                with col_info2:
+                    st.metric("📍 Longitude", f"{lon:.6f}°")
+                
+                google_earth_url = f"https://earth.google.com/web/@{lat},{lon},500a,1000d,35y,0h,0t,0r"
+                st.markdown(f"🌍 [**Ver no Google Earth**]({google_earth_url})")
+                
+            except Exception as e:
+                st.error(f"❌ Erro ao carregar mapa: {e}")
         
         with col2:
             st.subheader("📊 Análise NDVI")
-            st.image("https://via.placeholder.com/400x300/FF6B35/FFFFFF?text=NDVI+Analysis", 
-                    caption="Mapa de índice de vegetação")
+            
+            try:
+                size = 15
+                x = np.linspace(-0.005, 0.005, size)
+                y = np.linspace(-0.005, 0.005, size)
+                X, Y = np.meshgrid(x, y)
+                
+                np.random.seed(42)
+                Z = np.zeros((size, size))
+                
+                for i in range(size):
+                    for j in range(size):
+                        if (i // 3) % 2 == 0 and (j // 3) % 2 == 0:
+                            Z[i, j] = 0.7 + 0.15 * np.random.random()
+                        elif (i // 4) % 2 == 1 or (j // 4) % 2 == 1:
+                            Z[i, j] = 0.4 + 0.2 * np.random.random()
+                        else:
+                            Z[i, j] = 0.1 + 0.2 * np.random.random()
+                
+                fig_ndvi_map = go.Figure(data=go.Heatmap(
+                    z=Z,
+                    colorscale=[
+                        [0, '#8B4513'],
+                        [0.3, '#D2B48C'],
+                        [0.5, '#FFFF00'],
+                        [0.7, '#9ACD32'],
+                        [1, '#006400']
+                    ],
+                    zmin=0,
+                    zmax=1,
+                    colorbar=dict(
+                        title="NDVI",
+                        tickvals=[0, 0.2, 0.4, 0.6, 0.8, 1.0],
+                        ticktext=['0.0', '0.2', '0.4', '0.6', '0.8', '1.0']
+                    )
+                ))
+                
+                fig_ndvi_map.update_layout(
+                    title="Mapa NDVI - Análise de Vegetação",
+                    xaxis_title="Longitude Relativa",
+                    yaxis_title="Latitude Relativa",
+                    height=300,
+                    showlegend=False
+                )
+                
+                st.plotly_chart(fig_ndvi_map, width='stretch')
+                
+                ndvi_medio = np.mean(Z)
+                ndvi_max = np.max(Z)
+                ndvi_min = np.min(Z)
+                
+                col_ndvi1, col_ndvi2, col_ndvi3 = st.columns(3)
+                with col_ndvi1:
+                    st.metric("NDVI Médio", f"{ndvi_medio:.2f}")
+                with col_ndvi2:
+                    st.metric("NDVI Máximo", f"{ndvi_max:.2f}")
+                with col_ndvi3:
+                    st.metric("NDVI Mínimo", f"{ndvi_min:.2f}")
+                
+                if ndvi_medio > 0.6:
+                    st.success("✅ Vegetação saudável detectada")
+                elif ndvi_medio > 0.4:
+                    st.warning("⚠️ Vegetação moderada")
+                else:
+                    st.error("❌ Baixa cobertura vegetal")
+                    
+            except Exception as e:
+                st.error(f"❌ Erro ao gerar análise NDVI: {e}")
+                
+                st.info("📊 **Análise NDVI Simplificada**")
+                ndvi_atual = round(0.6 + random.uniform(-0.2, 0.3), 2)
+                st.metric("NDVI Atual", f"{ndvi_atual}")
+                
+                if ndvi_atual > 0.7:
+                    st.success("✅ Vegetação excelente")
+                elif ndvi_atual > 0.5:
+                    st.warning("⚠️ Vegetação boa")
+                else:
+                    st.error("❌ Vegetação baixa")
         
-        # Análise temporal
         st.subheader("📈 Evolução NDVI")
         
         ndvi_historico = pd.DataFrame({
-            'Data': pd.date_range(start='2024-01-01', periods=12, freq='M'),
+            'Data': pd.date_range(start='2024-01-01', periods=12, freq='ME'),
             'NDVI': [0.6 + i*0.02 + random.uniform(-0.05, 0.05) for i in range(12)]
         })
         
@@ -543,7 +613,7 @@ def main():
             title="Evolução do NDVI ao Longo do Ano",
             color_discrete_sequence=['#228B22']
         )
-        st.plotly_chart(fig_ndvi, use_container_width=True)
+        st.plotly_chart(fig_ndvi, width='stretch')
 
     with tab4:
         st.header("📈 Dados de Mercado")
@@ -565,7 +635,6 @@ def main():
                 'Tendência': ['📈', '📉', '📈', '📈']
             })
             
-            # Colorir baseado na variação
             def color_variacao(val):
                 if val > 0:
                     return 'background-color: #d4edda'
@@ -574,8 +643,8 @@ def main():
                 else:
                     return ''
             
-            styled_precos = precos.style.applymap(color_variacao, subset=['Variação (%)'])
-            st.dataframe(styled_precos, use_container_width=True)
+            styled_precos = precos.style.map(color_variacao, subset=['Variação (%)'])
+            st.dataframe(styled_precos, width='stretch')
         
         with col2:
             st.subheader("📊 Análise de Rentabilidade")
@@ -590,10 +659,9 @@ def main():
                 st.metric("💸 Custo Produção", f"R$ {custo_producao:.2f}/sc")
                 st.metric("📊 Margem", f"R$ {margem:.2f}/sc", f"{rentabilidade:.1f}%")
         
-        # Gráfico histórico de preços
         st.subheader("📈 Evolução de Preços (Últimos 6 meses)")
         
-        meses = pd.date_range(start='2024-03-01', periods=6, freq='M')
+        meses = pd.date_range(start='2024-03-01', periods=6, freq='ME')
         preco_historico = pd.DataFrame({
             'Mês': meses,
             'Soja': [145 + i*2 + random.uniform(-5, 5) for i in range(6)],
@@ -613,7 +681,7 @@ def main():
             yaxis_title="Preço (R$/saca)",
             hovermode='x unified'
         )
-        st.plotly_chart(fig_precos, use_container_width=True)
+        st.plotly_chart(fig_precos, width='stretch')
 
     # Auto-refresh
     if auto_refresh:
