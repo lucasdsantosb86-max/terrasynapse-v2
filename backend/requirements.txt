@@ -1,0 +1,45 @@
+# TerraSynapse V2.0 - Backend Dependencies
+
+# FastAPI e servidor
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+
+# HTTP requests assíncronos
+aiohttp==3.9.1
+httpx==0.25.2
+
+# Cache e armazenamento
+redis==5.0.1
+cachetools==5.3.2
+
+# Processamento de dados
+pandas==2.1.4
+numpy==1.25.2
+
+# Análise geoespacial
+geopy==2.4.1
+shapely==2.0.2
+
+# Processamento de imagens (satélite)
+Pillow==10.1.0
+opencv-python==4.8.1.78
+
+# Ambiente e configuração
+python-dotenv==1.0.0
+pydantic-settings==2.1.0
+
+# Monitoramento e logs
+python-multipart==0.0.6
+python-json-logger==2.0.7
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+
+# APIs específicas
+requests==2.31.0
+
+# Opcional: Para conectar com bancos de dados futuramente
+# psycopg2-binary==2.9.9
+# sqlalchemy==2.0.23

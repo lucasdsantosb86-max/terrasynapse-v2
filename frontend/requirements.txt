@@ -1,0 +1,19 @@
+# TerraSynapse V2.0 - Frontend Dependencies
+
+# Streamlit e interface
+streamlit==1.37.1
+streamlit-extras==0.3.6
+
+# Visualização de dados
+plotly==5.17.0
+pandas==2.1.4
+
+# Requisições HTTP
+requests==2.31.0
+
+# Processamento de dados
+numpy==1.25.2
+
+# Opcional: Para mapas interativos
+# folium==0.15.0
+# streamlit-folium==0.15.0
