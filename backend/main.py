@@ -1,12 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from api.auth_routes import router as auth_router
 
 app = FastAPI(
     title="TerraSynapse API",
     description="Sistema de Monitoramento Agrícola - Backend",
     version="2.0.0"
 )
+
+# Incluir rotas de autenticação
+app.include_router(auth_router)
 
 # CORS para permitir frontend
 app.add_middleware(
