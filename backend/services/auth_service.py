@@ -15,8 +15,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 security = HTTPBearer()
 
+# Constantes de perfis (não é BaseModel)
 class UserProfile:
-    """Perfis profissionais disponíveis"""
     AGRONOMO = "agronomo"
     ZOOTECNISTA = "zootecnista"
     FAZENDEIRO_CORTE = "fazendeiro_corte"
@@ -57,59 +57,26 @@ class User(BaseModel):
 
 class AuthService:
     def __init__(self):
-        # Simulação de banco - substituir por PostgreSQL
         self.users_db = {}
-        self.sessions_db = {}
 
     def hash_password(self, password: str) -> str:
-        """Hash seguro da senha"""
         salt = bcrypt.gensalt()
         return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
     def verify_password(self, password: str, hashed: str) -> bool:
-        """Verificar senha"""
         return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
     def create_access_token(self, data: dict) -> str:
-        """Criar JWT token"""
         to_encode = data.copy()
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-    def validate_profile_data(self, registration: UserRegistration) -> bool:
-        """Validar dados específicos por perfil"""
-        profile_requirements = {
-            UserProfile.AGRONOMO: ["crea_crmv"],
-            UserProfile.ZOOTECNISTA: ["crea_crmv"],
-            UserProfile.GENETICA_ANIMAL: ["crea_crmv"],
-            UserProfile.GENETICA_VEGETAL: ["crea_crmv"],
-        }
-        
-        required_fields = profile_requirements.get(registration.perfil_profissional, [])
-        
-        for field in required_fields:
-            if not getattr(registration, field):
-                return False
-        return True
-
     async def register_user(self, registration: UserRegistration) -> dict:
-        """Registrar novo usuário"""
-        
         # Verificar se email já existe
         for user in self.users_db.values():
             if user["email"] == registration.email:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email já cadastrado"
-                )
-
-        # Validar dados específicos do perfil
-        if not self.validate_profile_data(registration):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Dados obrigatórios faltando para perfil {registration.perfil_profissional}"
-            )
+                raise HTTPException(status_code=400, detail="Email já cadastrado")
 
         # Criar usuário
         user_id = str(uuid.uuid4())
@@ -137,7 +104,7 @@ class AuthService:
         
         self.users_db[user_id] = user_data
         
-        # Criar token de acesso
+        # Criar token
         access_token = self.create_access_token(
             data={"sub": user_id, "perfil": registration.perfil_profissional}
         )
@@ -150,7 +117,6 @@ class AuthService:
         }
 
     async def login(self, email: str, password: str) -> dict:
-        """Login do usuário"""
         user = None
         for user_data in self.users_db.values():
             if user_data["email"] == email:
@@ -158,16 +124,7 @@ class AuthService:
                 break
         
         if not user or not self.verify_password(password, user["password"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Email ou senha incorretos"
-            )
-        
-        if not user["is_active"]:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Conta desativada"
-            )
+            raise HTTPException(status_code=401, detail="Email ou senha incorretos")
         
         # Atualizar último login
         user["last_login"] = datetime.utcnow()
@@ -185,55 +142,31 @@ class AuthService:
         }
 
     def get_dashboard_config(self, perfil: str) -> dict:
-        """Configuração do dashboard por perfil"""
         configs = {
-            UserProfile.AGRONOMO: {
+            "agronomo": {
                 "titulo": "Dashboard Agronômico",
-                "modulos": ["clima", "solo", "pragas", "irrigacao", "ndvi"],
-                "cor_tema": "#2E7D32",
-                "widgets": ["alertas_fitossanitarios", "calendario_aplicacoes", "analise_solo"]
+                "modulos": ["clima", "solo", "ndvi"],
+                "cor_tema": "#2E7D32"
             },
-            UserProfile.ZOOTECNISTA: {
-                "titulo": "Dashboard Zootécnico",
-                "modulos": ["pastagem", "nutricao", "reproducao", "sanidade"],
-                "cor_tema": "#1976D2",
-                "widgets": ["indice_pastagem", "controle_reproducao", "alertas_sanitarios"]
+            "zootecnista": {
+                "titulo": "Dashboard Zootécnico", 
+                "modulos": ["pastagem", "nutricao"],
+                "cor_tema": "#1976D2"
             },
-            UserProfile.FAZENDEIRO_CORTE: {
+            "fazendeiro_corte": {
                 "titulo": "Dashboard Pecuária de Corte",
-                "modulos": ["rebanho", "pastagem", "mercado", "financeiro"],
-                "cor_tema": "#F57C00",
-                "widgets": ["preco_arroba", "indice_pastagem", "controle_peso"]
-            },
-            UserProfile.FAZENDEIRO_LEITE: {
-                "titulo": "Dashboard Pecuária Leiteira",
-                "modulos": ["ordenha", "nutricao", "reproducao", "qualidade_leite"],
-                "cor_tema": "#0288D1",
-                "widgets": ["producao_diaria", "ccs_cbt", "eficiencia_reproducao"]
-            },
-            UserProfile.GENETICA_ANIMAL: {
-                "titulo": "Dashboard Genética Animal",
-                "modulos": ["genealogia", "desempenho", "acasalamentos", "dea"],
-                "cor_tema": "#7B1FA2",
-                "widgets": ["arvore_genealogica", "dep", "controle_acasalamento"]
-            },
-            UserProfile.PROPRIETARIO_HARAS: {
-                "titulo": "Dashboard Equinocultura",
-                "modulos": ["cavalos", "reproducao", "treinamento", "competicoes"],
-                "cor_tema": "#8D6E63",
-                "widgets": ["controle_éguas", "agenda_cobertura", "resultados_competicao"]
+                "modulos": ["rebanho", "mercado"],
+                "cor_tema": "#F57C00"
             }
         }
         
         return configs.get(perfil, {
             "titulo": "Dashboard Agronegócio",
             "modulos": ["geral"],
-            "cor_tema": "#388E3C",
-            "widgets": ["dashboard_geral"]
+            "cor_tema": "#388E3C"
         })
 
     async def get_current_user(self, credentials: HTTPAuthorizationCredentials = Depends(security)) -> User:
-        """Obter usuário atual do token"""
         try:
             payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
             user_id: str = payload.get("sub")
@@ -248,5 +181,5 @@ class AuthService:
         
         return User(**user)
 
-# Instância global do serviço
+# Instância global
 auth_service = AuthService()
