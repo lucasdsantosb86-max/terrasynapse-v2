@@ -15,7 +15,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 security = HTTPBearer()
 
-class UserProfile(BaseModel):
+class UserProfile:
     """Perfis profissionais disponíveis"""
     AGRONOMO = "agronomo"
     ZOOTECNISTA = "zootecnista"
