@@ -1,4 +1,4 @@
-# frontend/auth_main.py - Nova versão com autenticação
+# frontend/auth_main.py - TerraSynapse V2.0 com Autenticação
 import streamlit as st
 import sys
 import os
@@ -20,6 +20,19 @@ st.set_page_config(
 def main():
     """Função principal do aplicativo"""
     
+    # CSS customizado
+    st.markdown("""
+    <style>
+        .main-header {
+            background: linear-gradient(90deg, #2E7D32, #4CAF50);
+            padding: 1rem;
+            border-radius: 10px;
+            color: white;
+            margin-bottom: 2rem;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
     # Verificar se usuário está autenticado
     if not auth_system.is_authenticated():
         # Página de login/cadastro
@@ -31,44 +44,66 @@ def main():
         
         # Header personalizado
         st.markdown(f"""
-        <div style="background: linear-gradient(90deg, {config.get('cor_tema', '#388E3C')}, #4CAF50); 
-                    padding: 1rem; border-radius: 10px; color: white; margin-bottom: 1rem;">
-            <h2 style="margin: 0;">{config.get('titulo', 'Dashboard')}</h2>
+        <div class="main-header">
+            <h2 style="margin: 0;">{config.get('titulo', 'Dashboard TerraSynapse')}</h2>
             <p style="margin: 0; opacity: 0.9;">
-                👤 {user['nome_completo']} | 🏢 {user['empresa_propriedade']}
+                👤 {user['nome_completo']} | 🏢 {user['empresa_propriedade']} | 📍 {user['cidade']}, {user['estado']}
             </p>
         </div>
         """, unsafe_allow_html=True)
         
-        # Sidebar com logout
+        # Sidebar com informações do usuário
         with st.sidebar:
-            st.markdown(f"### Bem-vindo, {user['nome_completo']}")
-            st.markdown(f"**Perfil:** {user['perfil_profissional']}")
-            st.markdown(f"**Empresa:** {user['empresa_propriedade']}")
+            st.markdown(f"""
+            ### 👤 Perfil Ativo
+            **Nome:** {user['nome_completo']}  
+            **Perfil:** {user['perfil_profissional'].replace('_', ' ').title()}  
+            **Empresa:** {user['empresa_propriedade']}  
+            **Localização:** {user['cidade']}, {user['estado']}
+            """)
             
-            if st.button("🚪 Sair"):
+            st.markdown("---")
+            
+            if st.button("🚪 Sair do Sistema", use_container_width=True):
                 auth_system.logout()
         
         # Dashboard específico do perfil
         profile_dashboards.render_dashboard_by_profile(user['perfil_profissional'])
         
-        # Ferramentas adicionais
+        # Ferramentas especializadas
         st.markdown("---")
         st.markdown("### 🛠️ Ferramentas Especializadas")
         
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("📊 Relatórios Técnicos", use_container_width=True):
+                st.success("✅ Relatório técnico gerado!")
+        
+        with col2:
+            if st.button("🧮 Calculadoras Agro", use_container_width=True):
+                st.success("✅ Calculadora carregada!")
+        
+        with col3:
+            if st.button("📈 Análises Avançadas", use_container_width=True):
+                st.success("✅ Análise iniciada!")
+        
+        with col4:
+            if st.button("💡 Suporte Técnico", use_container_width=True):
+                st.info("📞 Contato: suporte@terrasynapse.com")
+        
+        # Footer profissional
+        st.markdown("---")
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📊 Relatórios", use_container_width=True):
-                st.success("Relatório gerado!")
+            st.markdown("🌱 **TerraSynapse V2.0** - Sistema Profissional")
         
         with col2:
-            if st.button("🧮 Calculadoras", use_container_width=True):
-                st.success("Calculadora carregada!")
+            st.markdown(f"⚡ **Status:** Sistema Online - Perfil {user['perfil_profissional'].title()}")
         
         with col3:
-            if st.button("📈 Análises", use_container_width=True):
-                st.success("Análise iniciada!")
+            st.markdown("🔒 **Segurança:** Dados protegidos LGPD")
 
 if __name__ == "__main__":
     main()
