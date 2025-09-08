@@ -31,7 +31,6 @@ safe_init_session_state()
 sys.path.append(os.path.join(os.path.dirname(__file__), 'components'))
 
 try:
-    from components.auth_system import auth_system
     from components.profile_dashboards import profile_dashboards
 except ImportError as e:
     st.error(f"Erro ao carregar componentes: {e}")
