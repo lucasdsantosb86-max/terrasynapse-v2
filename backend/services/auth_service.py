@@ -1,9 +1,9 @@
-# backend/services/auth_service.py
+# backend/services/auth_service.py - VERSÃO CORRIGIDA
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional
 import jwt
 import bcrypt
 import uuid
@@ -15,7 +15,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 security = HTTPBearer()
 
-# Constantes de perfis (não é BaseModel)
+# Constantes de perfis (classe simples, NÃO BaseModel)
 class UserProfile:
     AGRONOMO = "agronomo"
     ZOOTECNISTA = "zootecnista"
@@ -126,17 +126,15 @@ class AuthService:
         if not user or not self.verify_password(password, user["password"]):
             raise HTTPException(status_code=401, detail="Email ou senha incorretos")
         
-        # Atualizar último login
         user["last_login"] = datetime.utcnow()
         
-        # Criar token
         access_token = self.create_access_token(
             data={"sub": user["id"], "perfil": user["perfil_profissional"]}
         )
         
         return {
             "access_token": access_token,
-            "token_type": "bearer",
+            "token_type": "bearer", 
             "user": User(**user),
             "perfil_dashboard": self.get_dashboard_config(user["perfil_profissional"])
         }
@@ -149,14 +147,19 @@ class AuthService:
                 "cor_tema": "#2E7D32"
             },
             "zootecnista": {
-                "titulo": "Dashboard Zootécnico", 
+                "titulo": "Dashboard Zootécnico",
                 "modulos": ["pastagem", "nutricao"],
                 "cor_tema": "#1976D2"
             },
             "fazendeiro_corte": {
-                "titulo": "Dashboard Pecuária de Corte",
+                "titulo": "Dashboard Pecuária de Corte", 
                 "modulos": ["rebanho", "mercado"],
                 "cor_tema": "#F57C00"
+            },
+            "fazendeiro_leite": {
+                "titulo": "Dashboard Pecuária Leiteira",
+                "modulos": ["ordenha", "qualidade_leite"],
+                "cor_tema": "#0288D1"
             }
         }
         
