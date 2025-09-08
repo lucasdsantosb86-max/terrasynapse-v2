@@ -6,6 +6,8 @@ import sqlite3
 import bcrypt
 import jwt
 import uvicorn
+from api.routes import router as api_router
+app.include_router(api_router)
 from datetime import datetime, timedelta
 import os
 
