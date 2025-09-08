@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
-:root{ --ts-green:#2c5530; --ts-green-2:#4a7c59; --bg:#f5f7f6; --text:#1f2937; }
-html,body,#root{height:100%}
-body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+/* Tema TerraSynapse */
+:root{
+  --ts-green: #2c5530;
+  --ts-green-2: #4a7c59;
+  --bg: #f7faf7;
+  --text: #0f172a;
+}
+html, body, #root { height: 100%; }
+body { background: var(--bg); color: var(--text); }
