@@ -1,7 +1,12 @@
 # frontend/main.py - TerraSynapse V2.0 Sistema Profissional
 import streamlit as st
-import sys
-import os
+import requests
+import json
+import time
+from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
 
 # Configuração da página ANTES de qualquer import
 st.set_page_config(
