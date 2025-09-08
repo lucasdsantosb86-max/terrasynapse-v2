@@ -1,18 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import os
-from api.auth_routes import router as auth_router
+import uvicorn
 
 app = FastAPI(
     title="TerraSynapse API",
-    description="Sistema de Monitoramento Agrícola - Backend",
+    description="Sistema Profissional Agropecuário",
     version="2.0.0"
 )
 
-# Incluir rotas de autenticação
-app.include_router(auth_router)
-
-# CORS para permitir frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,46 +19,32 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "message": "TerraSynapse V2.0 API - Sistema Online",
-        "version": "2.0.0",
-        "status": "running"
+        "message": "TerraSynapse API Online",
+        "status": "operational",
+        "version": "2.0.0"
     }
 
 @app.get("/health")
 async def health():
+    return {"status": "healthy"}
+
+@app.post("/auth/login")
+async def login(credentials: dict):
     return {
-        "status": "healthy", 
-        "version": "2.0.0",
-        "service": "TerraSynapse Backend"
+        "message": "Login simulado",
+        "user": {
+            "nome_completo": credentials.get("email", "Usuario"),
+            "perfil_profissional": "agronomo"
+        }
     }
 
-@app.get("/api/weather")
-async def get_weather():
+@app.get("/api/climate/current")
+async def get_climate():
     return {
-        "temperature": 25.5,
+        "temperature": 24.5,
         "humidity": 68,
-        "wind_speed": 15,
-        "status": "demo_mode"
-    }
-
-@app.get("/api/satellite")
-async def get_satellite():
-    return {
-        "ndvi": 0.75,
-        "coordinates": [-19.0919, -50.2991],
-        "status": "demo_mode"
-    }
-
-@app.get("/api/market")
-async def get_market():
-    return {
-        "soja": 155.50,
-        "milho": 48.30,
-        "variacao": 2.1,
-        "status": "demo_mode"
+        "status": "operational"
     }
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
