@@ -32,7 +32,7 @@ type Alert = {
   time: string;
 };
 
-/* ===== Dados fake para gráficos ===== */
+/* ===== Dados fake ===== */
 type Point = { dia: string; et0: number };
 type Comm = { nome: string; preco: number };
 
@@ -47,7 +47,7 @@ const commoditiesData: Comm[] = [
   { nome: "Café",  preco: 1060},
 ];
 
-/* ===== Componentes tipados ===== */
+/* ===== Cards tipados ===== */
 type MetricCardProps = {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   title: string;
@@ -98,7 +98,6 @@ export default function TerraSynapseEnterprise() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
   useEffect(() => {
-    // valores iniciais
     setWeatherData({
       temperature: 24.5,
       humidity: 68,
@@ -122,10 +121,7 @@ export default function TerraSynapseEnterprise() {
     ]);
 
     const timer = window.setInterval(() => {
-      // Exemplo: oscila a ET0 levemente
-      setWeatherData(prev =>
-        prev ? { ...prev, et0: +(prev.et0 + (Math.random() - 0.5) * 0.4).toFixed(2) } : prev
-      );
+      setWeatherData(prev => (prev ? { ...prev, et0: +(prev.et0 + (Math.random() - 0.5) * 0.4).toFixed(2) } : prev));
     }, 8000);
 
     return () => window.clearInterval(timer);
@@ -183,7 +179,7 @@ export default function TerraSynapseEnterprise() {
           </div>
         </div>
 
-        {/* Grids */}
+        {/* Gráficos */}
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-2xl p-5 shadow-sm border border-black/5">
             <h3 className="text-lg font-semibold mb-2">Clima — ET₀ (7 dias)</h3>
