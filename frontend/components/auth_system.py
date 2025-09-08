@@ -6,12 +6,17 @@ class AuthSystem:
         self.backend_url = backend_url
         self.init_session_state()
     
-    def init_session_state(self):
-        if 'user' not in st.session_state:
-            st.session_state.user = None
-        if 'access_token' not in st.session_state:
-            st.session_state.access_token = None
-
+   def init_session_state(self):
+    """Inicializar estado da sessão de forma robusta"""
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'access_token' not in st.session_state:
+        st.session_state.access_token = None
+    if 'dashboard_config' not in st.session_state:
+        st.session_state.dashboard_config = None
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 'dashboard'
+        
     def is_authenticated(self):
         return st.session_state.user is not None
 
