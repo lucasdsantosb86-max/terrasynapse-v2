@@ -17,8 +17,12 @@ class AuthSystem:
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 'dashboard'
         
-    def is_authenticated(self):
-        return st.session_state.user is not None
+   def is_authenticated(self):
+    """Verificar se usuário está autenticado com verificação segura"""
+    return (hasattr(st.session_state, 'user') and 
+            st.session_state.user is not None and 
+            hasattr(st.session_state, 'access_token') and
+            st.session_state.access_token is not None)
 
     def render_auth_page(self):
         st.title("TerraSynapse - Sistema Profissional")
