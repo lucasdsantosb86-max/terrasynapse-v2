@@ -1,3 +1,6 @@
+def main():
+    # Garantir inicialização do session_state
+    auth_system.init_session_state()
 # No início da função main(), antes de qualquer verificação
 if 'user' not in st.session_state:
     st.session_state.user = None
