@@ -1,4 +1,6 @@
 <<<<<<< HEAD
+        
+import { login as apiLogin, register as apiRegister, getDashboard, saveToken } from "../services/api";
 import React, { useEffect, useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
