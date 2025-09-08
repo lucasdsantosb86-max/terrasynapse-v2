@@ -1,3 +1,6 @@
+# No início da função main(), antes de qualquer verificação
+if 'user' not in st.session_state:
+    st.session_state.user = None
 # frontend/main.py - TerraSynapse V2.0 Sistema Profissional
 import streamlit as st
 import sys
