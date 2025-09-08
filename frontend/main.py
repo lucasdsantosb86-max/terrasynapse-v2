@@ -8,7 +8,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'components'))
 
 from components.auth_system import auth_system
 from components.profile_dashboards import profile_dashboards
-
 # Configuração da página
 st.set_page_config(
     page_title="TerraSynapse - Sistema Profissional Agropecuário",

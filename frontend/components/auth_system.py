@@ -31,7 +31,11 @@ class AuthSystem:
                         "nome_completo": email,
                         "perfil_profissional": "agronomo",
                         "empresa_propriedade": "Empresa",
+<<<<<<< HEAD
                         "cidade": "Cidade", 
+=======
+                        "cidade": "Cidade",
+>>>>>>> ab0c6f6238c229159c6e680311316d12674c1883
                         "estado": "Estado"
                     }
                     st.rerun()
