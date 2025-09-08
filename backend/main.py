@@ -8,7 +8,7 @@ import jwt
 import uvicorn
 from datetime import datetime, timedelta
 import os
-import aiohttp
+import httpx
 import asyncio
 import json
 import math
