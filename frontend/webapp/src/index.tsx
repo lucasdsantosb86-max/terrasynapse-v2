@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import "./index.css"; // único CSS importado no app
+import "./index.css";
 
 import TerraSynapseEnterprise from "./components/TerraSynapseEnterprise";
 
