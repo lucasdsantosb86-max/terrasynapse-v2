@@ -1,3 +1,4 @@
+from streamlit_geolocation import geolocation
 import os
 import time
 from datetime import datetime
@@ -102,14 +103,23 @@ def geolocalizacao_por_ip() -> Tuple[float, float, str, str]:
         pass
     return DEFAULT_LAT, DEFAULT_LON, "Brasília", "DF"
 
-def obter_localizacao() -> Tuple[float, float, str, str]:
+def obter_localizacao():
     """
-    Ordem de resolução:
-      1) valores salvos na sessão (o usuário pode editar)
-      2) valores do secrets [site]
-      3) IP-geo
-      4) fallback Brasília
+    1) tenta obter a posição via navegador (precisa https e permissão do usuário)
+    2) se o usuário negar ou falhar, usa valor salvo na sidebar (se houver)
+    3) como último recurso, usa um fallback fixo
     """
+    # 1) geolocalização do navegador
+    loc = geolocation(key="geo_btn", refresh_button_text="Atualizar localização")
+    if loc and loc.get("latitude") and loc.get("longitude"):
+        return float(loc["latitude"]), float(loc["longitude"]), "Local atual", ""
+
+    # 2) tentativa: se você tiver guardado algo no session_state
+    if "user_lat" in st.session_state and "user_lon" in st.session_state:
+        return float(st.session_state.user_lat), float(st.session_state.user_lon), "Coordenadas salvas", ""
+
+    # 3) fallback (ex.: Brasília)
+    return -15.7942, -47.8822, "Brasília", "DF"
     # 1) sessão
     if "lat" in st.session_state and "lon" in st.session_state:
         return (
