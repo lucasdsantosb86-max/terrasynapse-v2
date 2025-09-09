@@ -1,14 +1,13 @@
+# backend/main.py
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
-import os
-import pathlib
 import sqlite3
 import bcrypt
 import jwt
 import uvicorn
 from datetime import datetime, timedelta
+import os
 import httpx
 import asyncio
 import math
@@ -18,11 +17,11 @@ import logging
 # Configuração básica
 # ----------------------------------
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("terrasynapse.backend")
+logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "terrasynapse_enterprise_2024_secure")
+SECRET_KEY = "terrasynapse_enterprise_2024_secure"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 app = FastAPI(
     title="TerraSynapse Enterprise API",
@@ -56,70 +55,55 @@ app.add_middleware(
 security = HTTPBearer()
 
 # ----------------------------------
-# DB helpers (idempotente + thread-safe)
+# DB
 # ----------------------------------
-DB_PATH = os.getenv(
-    "DB_PATH",
-    str((pathlib.Path(__file__).parent / "terrasynapse.db").resolve())
-)
-
-def get_db() -> sqlite3.Connection:
-    # Permite acesso multi-thread do FastAPI/uvicorn
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    return conn
-
-def ensure_schema(conn: sqlite3.Connection) -> None:
-    cur = conn.cursor()
-    # Modo WAL melhora concorrência no Render/uvicorn
-    cur.execute("PRAGMA journal_mode=WAL;")
-    cur.execute("PRAGMA synchronous=NORMAL;")
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome_completo TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            perfil_profissional TEXT,
-            empresa_propriedade TEXT,
-            cidade TEXT,
-            estado TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS fazendas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id INTEGER,
-            nome TEXT NOT NULL,
-            latitude REAL,
-            longitude REAL,
-            area_hectares REAL,
-            cultura_principal TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
-        )
-    """)
-
-    # Garantir índice único (caso antigo não tivesse)
-    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_email ON usuarios(email);")
-
-    conn.commit()
-
-def init_database() -> None:
+def init_database():
     try:
-        conn = get_db()
-        ensure_schema(conn)
+        conn = sqlite3.connect("terrasynapse.db")
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome_completo TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                perfil_profissional TEXT,
+                empresa_propriedade TEXT,
+                cidade TEXT,
+                estado TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fazendas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER,
+                nome TEXT NOT NULL,
+                latitude REAL,
+                longitude REAL,
+                area_hectares REAL,
+                cultura_principal TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
+            )
+            """
+        )
+
+        conn.commit()
         conn.close()
-        logger.info(f"Database initialized at {DB_PATH}")
+        logger.info("Database initialized successfully")
     except Exception as e:
-        logger.exception(f"Database initialization error: {e}")
+        logger.error(f"Database initialization error: {e}")
 
 # ----------------------------------
 # Auth helpers
 # ----------------------------------
-def create_access_token(data: dict) -> str:
+def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
@@ -130,7 +114,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        if not email:
+        if email is None:
             raise HTTPException(status_code=401, detail="Token inválido")
         return {"email": email}
     except jwt.PyJWTError:
@@ -142,8 +126,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 def calculate_et0(temp_max, temp_min, humidity, wind_speed, solar_radiation=None):
     try:
         temp_mean = (temp_max + temp_min) / 2
-        # (delta calculado mas não usado na versão simplificada)
-        _ = 4098 * (0.6108 * math.exp(17.27 * temp_mean / (temp_mean + 237.3))) / ((temp_mean + 237.3) ** 2)
+        # componentes da Penman-Monteith não usados diretamente aqui, mas mantidos p/ clareza
+        _ = 4098 * (0.6108 * math.exp(17.27 * temp_mean / (temp_mean + 237.3))) / (
+            (temp_mean + 237.3) ** 2
+        )
         if solar_radiation is None:
             solar_radiation = 15
         et0 = (0.0023 * (temp_mean + 17.8) * abs(temp_max - temp_min) ** 0.5 * solar_radiation) / 2.45
@@ -158,9 +144,9 @@ async def get_weather_data(lat: float, lon: float):
         params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric", "lang": "pt_br"}
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            if resp.status_code == 200:
-                data = resp.json()
+            response = await client.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
                 temp = data["main"]["temp"]
                 humidity = data["main"]["humidity"]
                 wind_speed = data["wind"]["speed"]
@@ -174,8 +160,6 @@ async def get_weather_data(lat: float, lon: float):
                     "et0": et0,
                     "recomendacao_irrigacao": "Necessária" if et0 > 5 else "Opcional",
                 }
-            else:
-                logger.warning(f"OpenWeather error {resp.status_code}: {resp.text[:180]}")
     except Exception as e:
         logger.error(f"Weather API error: {e}")
 
@@ -225,13 +209,88 @@ async def get_ndvi_data(lat: float, lon: float):
         "recomendacao": "Monitorar pragas" if ndvi < 0.5 else "Continuar manejo atual",
     }
 
+# --------- NOVO: mercado com dados reais (Yahoo + exchangerate.host) ----------
 async def get_market_data():
-    import random
-    return {
-        "soja":  {"preco": round(random.uniform(150, 180), 2), "variacao": round(random.uniform(-5, 5), 2), "tendencia": "Alta"},
-        "milho": {"preco": round(random.uniform(70,  90),  2), "variacao": round(random.uniform(-3, 3), 2),  "tendencia": "Estável"},
-        "cafe":  {"preco": round(random.uniform(800,1200), 2), "variacao": round(random.uniform(-8, 8), 2),  "tendencia": "Alta"},
-    }
+    """
+    Retorna preços reais em R$/saca para soja, milho e café.
+    Fontes:
+      - Yahoo Finance (query1.finance.yahoo.com)
+      - Exchangerate.host (USD->BRL)
+    Conversões:
+      - 1 saca = 60 kg
+      - Soja (ZS=F): USD / bushel | 1 bushel soja = 27.2155 kg -> 1 saca ≈ 2.2046 bushels
+      - Milho (ZC=F): USD / bushel | 1 bushel milho = 25.4 kg -> 1 saca ≈ 2.3622 bushels
+      - Café (KC=F): US cents / lb | 1 saca (60 kg) = 132.277 lb
+    """
+    TICKERS = {"soja": "ZS=F", "milho": "ZC=F", "cafe": "KC=F"}
+
+    async def yahoo_price(symbol: str) -> float:
+        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            res = r.json()["quoteResponse"]["result"]
+            if not res:
+                raise RuntimeError(f"Sem resultado para {symbol}")
+            return float(res[0]["regularMarketPrice"])
+
+    async def usd_brl() -> float:
+        url = "https://api.exchangerate.host/latest?base=USD&symbols=BRL"
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return float(r.json()["rates"]["BRL"])
+
+    try:
+        soja_usd, milho_usd, cafe_cents, usdbrl = await asyncio.gather(
+            yahoo_price(TICKERS["soja"]),
+            yahoo_price(TICKERS["milho"]),
+            yahoo_price(TICKERS["cafe"]),
+            usd_brl(),
+        )
+
+        # conversões p/ R$/saca (60 kg)
+        BUSHEL_SOJA_KG  = 27.2155
+        BUSHEL_MILHO_KG = 25.4
+        KG_POR_SACA     = 60.0
+
+        sacas_por_bushel_soja  = KG_POR_SACA / BUSHEL_SOJA_KG   # ≈ 2.2046
+        sacas_por_bushel_milho = KG_POR_SACA / BUSHEL_MILHO_KG  # ≈ 2.3622
+
+        soja_brl_saca  = soja_usd  * sacas_por_bushel_soja  * usdbrl
+        milho_brl_saca = milho_usd * sacas_por_bushel_milho * usdbrl
+
+        # Café (US¢/lb -> USD/lb -> USD/saca -> BRL/saca)
+        LB_POR_KG      = 2.2046226218
+        LB_POR_SACA    = KG_POR_SACA * LB_POR_KG               # ≈ 132.277 lb
+        cafe_usd_lb    = cafe_cents / 100.0
+        cafe_usd_saca  = cafe_usd_lb * LB_POR_SACA
+        cafe_brl_saca  = cafe_usd_saca * usdbrl
+
+        def pack(preco_brl: float, ref_usd: float):
+            return {
+                "preco": round(preco_brl, 2),
+                "variacao": 0.0,           # (opcional) calcular com close anterior
+                "tendencia": "—",          # placeholder
+                "fx": round(usdbrl, 4),
+                "ref_usd": ref_usd         # preço original em USD (ou US¢/lb no caso do café)
+            }
+
+        return {
+            "soja":  pack(soja_brl_saca,  soja_usd),
+            "milho": pack(milho_brl_saca, milho_usd),
+            "cafe":  pack(cafe_brl_saca,  cafe_cents),
+        }
+
+    except Exception as e:
+        logger.error(f"Market realtime error: {e}")
+        # fallback simples (mantém o app vivo)
+        return {
+            "soja":  {"preco": 165.0, "variacao": 0.0, "tendencia": "—"},
+            "milho": {"preco":  75.0, "variacao": 0.0, "tendencia": "—"},
+            "cafe":  {"preco": 950.0, "variacao": 0.0, "tendencia": "—"},
+        }
+# ------------------------------------------------------------------------------
 
 # ----------------------------------
 # Lifespan
@@ -240,19 +299,13 @@ async def get_market_data():
 async def startup_event():
     init_database()
     logger.info(f"CORS allow_origins={ALLOW_ORIGINS} | allow_origin_regex={ALLOW_REGEX}")
-    logger.info(f"DB_PATH={DB_PATH}")
 
 # ----------------------------------
 # Endpoints
 # ----------------------------------
 @app.get("/")
 async def root():
-    return {
-        "message": "TerraSynapse Enterprise API",
-        "version": "2.0.0",
-        "status": "online",
-        "timestamp": datetime.utcnow().isoformat()
-    }
+    return {"message": "TerraSynapse Enterprise API", "version": "2.0.0", "status": "online", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/health")
 async def health():
@@ -261,73 +314,58 @@ async def health():
 @app.post("/register")
 async def register_user(user_data: dict):
     try:
-        conn = get_db()
-        ensure_schema(conn)  # garante tabelas
+        conn = sqlite3.connect("terrasynapse.db")
         cur = conn.cursor()
-
         cur.execute("SELECT id FROM usuarios WHERE email = ?", (user_data["email"],))
         if cur.fetchone():
             conn.close()
             raise HTTPException(status_code=400, detail="Email já cadastrado")
-
         pwd_hash = bcrypt.hashpw(user_data["password"].encode("utf-8"), bcrypt.gensalt())
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO usuarios (nome_completo, email, password_hash, perfil_profissional,
                                   empresa_propriedade, cidade, estado)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            user_data["nome_completo"],
-            user_data["email"],
-            pwd_hash.decode("utf-8"),
-            user_data.get("perfil_profissional", "Produtor Rural"),
-            user_data.get("empresa_propriedade", ""),
-            user_data.get("cidade", ""),
-            user_data.get("estado", ""),
-        ))
+            """,
+            (
+                user_data["nome_completo"],
+                user_data["email"],
+                pwd_hash.decode("utf-8"),
+                user_data.get("perfil_profissional", "Produtor Rural"),
+                user_data.get("empresa_propriedade", ""),
+                user_data.get("cidade", ""),
+                user_data.get("estado", ""),
+            ),
+        )
         user_id = cur.lastrowid
         conn.commit()
         conn.close()
 
         token = create_access_token({"sub": user_data["email"]})
-        return {
-            "message": "Usuário cadastrado com sucesso",
-            "access_token": token,
-            "token_type": "bearer",
-            "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]}
-        }
-    except HTTPException:
-        raise
+        return {"message": "Usuário cadastrado com sucesso", "access_token": token, "token_type": "bearer",
+                "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]}}
     except Exception as e:
-        logger.exception(f"Registration error: {e}")
+        logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Erro no cadastro")
 
 @app.post("/login")
 async def login_user(credentials: dict):
     try:
-        conn = get_db()
-        ensure_schema(conn)  # garante tabelas
+        conn = sqlite3.connect("terrasynapse.db")
         cur = conn.cursor()
-
         cur.execute("SELECT * FROM usuarios WHERE email = ?", (credentials["email"],))
         user = cur.fetchone()
         conn.close()
-
         if not user:
             raise HTTPException(status_code=401, detail="Email não encontrado")
         if not bcrypt.checkpw(credentials["password"].encode("utf-8"), user[3].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Senha incorreta")
 
         token = create_access_token({"sub": user[2]})
-        return {
-            "message": "Login realizado com sucesso",
-            "access_token": token,
-            "token_type": "bearer",
-            "user": {"id": user[0], "nome": user[1], "email": user[2]}
-        }
-    except HTTPException:
-        raise
+        return {"message": "Login realizado com sucesso", "access_token": token, "token_type": "bearer",
+                "user": {"id": user[0], "nome": user[1], "email": user[2]}}
     except Exception as e:
-        logger.exception(f"Login error: {e}")
+        logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail="Erro no login")
 
 @app.get("/weather/{lat}/{lon}")
@@ -347,7 +385,7 @@ async def get_satellite(lat: float, lon: float, user: dict = Depends(verify_toke
         raise HTTPException(status_code=500, detail="Erro ao buscar dados de satélite")
 
 @app.get("/market")
-async def get_market(user: dict = Depends(verify_token)):
+async def market(user: dict = Depends(verify_token)):
     try:
         return {"status": "success", "data": await get_market_data()}
     except Exception as e:
@@ -363,15 +401,11 @@ async def get_dashboard(lat: float, lon: float, user: dict = Depends(verify_toke
 
         alertas = []
         if weather_data["et0"] > 6:
-            alertas.append({
-                "tipo": "irrigacao", "prioridade": "alta",
-                "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"
-            })
+            alertas.append({"tipo": "irrigacao", "prioridade": "alta",
+                            "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"})
         if ndvi_data["ndvi"] < 0.5:
-            alertas.append({
-                "tipo": "vegetacao", "prioridade": "media",
-                "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"
-            })
+            alertas.append({"tipo": "vegetacao", "prioridade": "media",
+                            "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"})
 
         soja_preco = market_data["soja"]["preco"]
         produtividade = 50 if ndvi_data["ndvi"] > 0.6 else 35
@@ -398,4 +432,4 @@ async def get_dashboard(lat: float, lon: float, user: dict = Depends(verify_toke
         raise HTTPException(status_code=500, detail="Erro ao gerar dashboard")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    uvicorn.run(app, host="0.0.0.0", port=8000)
