@@ -1,5 +1,5 @@
-﻿@import "./tailwind.css";
+@import "./tailwind.css";
 
-/* seus estilos globais opcionais */
+/* ajustes globais */
 html, body, #root { height: 100%; }
-body { margin: 0; }
+body { margin: 0; background: #f8fafc; }
