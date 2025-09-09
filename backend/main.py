@@ -13,11 +13,11 @@ import asyncio
 import math
 import logging
 
-# ----------------------------------
-# Configuração básica
-# ----------------------------------
+# =========================================================
+# Configurações básicas
+# =========================================================
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("terrasynapse-backend")
 
 SECRET_KEY = "terrasynapse_enterprise_2024_secure"
 ALGORITHM = "HS256"
@@ -25,19 +25,19 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 app = FastAPI(
     title="TerraSynapse Enterprise API",
-    description="Sistema Agropecuário Profissional",
+    description="Sistema Agropecuário Profissional — v2.0",
     version="2.0.0",
 )
 
-# ----------------------------------
+# =========================================================
 # CORS dinâmico (com fallback seguro)
-# ----------------------------------
+# =========================================================
 DEFAULT_ORIGINS = [
     "http://localhost:8501",                     # dev Streamlit
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://app.terrasynapse.com",              # seu domínio
-    "https://terrasynapse-frontend.onrender.com" # Render
+    "https://app.terrasynapse.com",              # domínio do app
+    "https://terrasynapse-frontend.onrender.com" # subdomínio Render
 ]
 env_origins = os.getenv("CORS_ORIGINS", "")
 ALLOW_ORIGINS = [o.strip() for o in env_origins.split(",") if o.strip()] or DEFAULT_ORIGINS
@@ -54,15 +54,15 @@ app.add_middleware(
 
 security = HTTPBearer()
 
-# ----------------------------------
-# DB
-# ----------------------------------
+# =========================================================
+# Banco de dados (SQLite)
+# =========================================================
 def init_database():
     try:
         conn = sqlite3.connect("terrasynapse.db")
-        cursor = conn.cursor()
+        cur = conn.cursor()
 
-        cursor.execute(
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,7 +78,7 @@ def init_database():
             """
         )
 
-        cursor.execute(
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS fazendas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,14 +96,14 @@ def init_database():
 
         conn.commit()
         conn.close()
-        logger.info("Database initialized successfully")
+        logger.info("DB OK: sqlite inicializado")
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+        logger.error(f"Erro ao inicializar DB: {e}")
 
-# ----------------------------------
-# Auth helpers
-# ----------------------------------
-def create_access_token(data: dict):
+# =========================================================
+# Auth helpers (JWT)
+# =========================================================
+def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
@@ -120,13 +120,13 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
-# ----------------------------------
-# Domínio: clima / NDVI / mercado
-# ----------------------------------
-def calculate_et0(temp_max, temp_min, humidity, wind_speed, solar_radiation=None):
+# =========================================================
+# Clima / NDVI / Mercado
+# =========================================================
+def calculate_et0(temp_max, temp_min, humidity, wind_speed, solar_radiation=None) -> float:
     try:
         temp_mean = (temp_max + temp_min) / 2
-        # componentes da Penman-Monteith não usados diretamente aqui, mas mantidos p/ clareza
+        # delta (não usado diretamente, mantido pela completude do método)
         _ = 4098 * (0.6108 * math.exp(17.27 * temp_mean / (temp_mean + 237.3))) / (
             (temp_mean + 237.3) ** 2
         )
@@ -137,33 +137,38 @@ def calculate_et0(temp_max, temp_min, humidity, wind_speed, solar_radiation=None
     except Exception:
         return 4.5
 
-async def get_weather_data(lat: float, lon: float):
+async def get_weather_data(lat: float, lon: float) -> dict:
+    """
+    OpenWeather (https) -> métricas básicas + ET0 aproximada.
+    Exige OPENWEATHER_API_KEY em variáveis de ambiente (Render -> Environment).
+    """
     try:
         api_key = os.getenv("OPENWEATHER_API_KEY", "demo")
         url = "https://api.openweathermap.org/data/2.5/weather"
         params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric", "lang": "pt_br"}
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, params=params)
-            if response.status_code == 200:
-                data = response.json()
-                temp = data["main"]["temp"]
-                humidity = data["main"]["humidity"]
-                wind_speed = data["wind"]["speed"]
+            r = await client.get(url, params=params)
+            if r.status_code == 200:
+                d = r.json()
+                temp = d["main"]["temp"]
+                humidity = d["main"]["humidity"]
+                wind_speed = d["wind"]["speed"]
                 et0 = calculate_et0(temp + 5, temp - 5, humidity, wind_speed)
                 return {
                     "temperatura": temp,
                     "umidade": humidity,
                     "vento": wind_speed,
-                    "pressao": data["main"]["pressure"],
-                    "descricao": data["weather"][0]["description"],
+                    "pressao": d["main"]["pressure"],
+                    "descricao": d["weather"][0]["description"],
                     "et0": et0,
                     "recomendacao_irrigacao": "Necessária" if et0 > 5 else "Opcional",
                 }
+            logger.warning(f"OpenWeather status={r.status_code}, body={r.text[:180]}")
     except Exception as e:
         logger.error(f"Weather API error: {e}")
 
-    # fallback aleatório
+    # Fallback aleatório (mantém o app funcionando)
     import random
     temp = random.uniform(18, 35)
     humidity = random.uniform(40, 90)
@@ -179,16 +184,19 @@ async def get_weather_data(lat: float, lon: float):
         "recomendacao_irrigacao": "Necessária" if et0 > 5 else "Opcional",
     }
 
-async def get_ndvi_data(lat: float, lon: float):
+async def get_ndvi_data(lat: float, lon: float) -> dict:
+    """
+    NDVI simulado por sazonalidade (mantém UI viva até ligar satélite real).
+    """
     import random
     mes = datetime.now().month
-    if 3 <= mes <= 5:
+    if 3 <= mes <= 5:       # outono (plantio soja 2ª/ milho safrinha)
         ndvi_base = random.uniform(0.6, 0.8)
-    elif 6 <= mes <= 8:
+    elif 6 <= mes <= 8:     # inverno (pós-colheita / palhada)
         ndvi_base = random.uniform(0.4, 0.6)
-    elif 9 <= mes <= 11:
+    elif 9 <= mes <= 11:    # primavera (pico de crescimento)
         ndvi_base = random.uniform(0.7, 0.9)
-    else:
+    else:                   # verão (amadurecimento/colheita)
         ndvi_base = random.uniform(0.5, 0.7)
 
     ndvi = round(ndvi_base, 3)
@@ -209,118 +217,145 @@ async def get_ndvi_data(lat: float, lon: float):
         "recomendacao": "Monitorar pragas" if ndvi < 0.5 else "Continuar manejo atual",
     }
 
-# --------- NOVO: mercado com dados reais (Yahoo + exchangerate.host) ----------
-async def get_market_data():
+# --------- Mercado com dados reais (Yahoo + FX) ----------
+async def get_market_data() -> dict:
     """
-    Retorna preços reais em R$/saca para soja, milho e café.
+    Preços em R$/saca (60 kg) para Soja, Milho e Café.
     Fontes:
       - Yahoo Finance (query1.finance.yahoo.com)
-      - Exchangerate.host (USD->BRL)
+      - Exchangerate.host (conversão USD->BRL)
     Conversões:
       - 1 saca = 60 kg
-      - Soja (ZS=F): USD / bushel | 1 bushel soja = 27.2155 kg -> 1 saca ≈ 2.2046 bushels
-      - Milho (ZC=F): USD / bushel | 1 bushel milho = 25.4 kg -> 1 saca ≈ 2.3622 bushels
-      - Café (KC=F): US cents / lb | 1 saca (60 kg) = 132.277 lb
+      - Soja (ZS=F): USD/bushel   | 1 bushel soja = 27.2155 kg -> 1 saca ≈ 2.2046 bushels
+      - Milho (ZC=F): USD/bushel  | 1 bushel milho = 25.4 kg   -> 1 saca ≈ 2.3622 bushels
+      - Café (KC=F): US cents/lb  | 1 saca = 60 kg = 132.277 lb
     """
     TICKERS = {"soja": "ZS=F", "milho": "ZC=F", "cafe": "KC=F"}
 
+    UA_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+    }
+
     async def yahoo_price(symbol: str) -> float:
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
-        async with httpx.AsyncClient(timeout=12) as client:
+        async with httpx.AsyncClient(timeout=15.0, headers=UA_HEADERS, http2=True) as client:
             r = await client.get(url)
             r.raise_for_status()
-            res = r.json()["quoteResponse"]["result"]
+            data = r.json()
+            res = data.get("quoteResponse", {}).get("result", [])
             if not res:
-                raise RuntimeError(f"Sem resultado para {symbol}")
-            return float(res[0]["regularMarketPrice"])
+                raise RuntimeError(f"Yahoo sem resultado para {symbol}")
+            price = res[0].get("regularMarketPrice")
+            if price is None:
+                raise RuntimeError(f"Yahoo sem preço regularMarketPrice para {symbol}")
+            return float(price)
 
     async def usd_brl() -> float:
         url = "https://api.exchangerate.host/latest?base=USD&symbols=BRL"
-        async with httpx.AsyncClient(timeout=12) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(url)
             r.raise_for_status()
             return float(r.json()["rates"]["BRL"])
 
     try:
-        soja_usd, milho_usd, cafe_cents, usdbrl = await asyncio.gather(
+        soja_usd, milho_usd, cafe_cents, fx = await asyncio.gather(
             yahoo_price(TICKERS["soja"]),
             yahoo_price(TICKERS["milho"]),
             yahoo_price(TICKERS["cafe"]),
             usd_brl(),
         )
 
-        # conversões p/ R$/saca (60 kg)
-        BUSHEL_SOJA_KG  = 27.2155
+        # Conversões para R$/saca
+        KG_POR_SACA = 60.0
+        BUSHEL_SOJA_KG = 27.2155
         BUSHEL_MILHO_KG = 25.4
-        KG_POR_SACA     = 60.0
+        LB_POR_KG = 2.2046226218
 
-        sacas_por_bushel_soja  = KG_POR_SACA / BUSHEL_SOJA_KG   # ≈ 2.2046
-        sacas_por_bushel_milho = KG_POR_SACA / BUSHEL_MILHO_KG  # ≈ 2.3622
+        sacas_por_bushel_soja = KG_POR_SACA / BUSHEL_SOJA_KG          # ≈ 2.2046
+        sacas_por_bushel_milho = KG_POR_SACA / BUSHEL_MILHO_KG         # ≈ 2.3622
+        lb_por_saca = KG_POR_SACA * LB_POR_KG                          # ≈ 132.277
 
-        soja_brl_saca  = soja_usd  * sacas_por_bushel_soja  * usdbrl
-        milho_brl_saca = milho_usd * sacas_por_bushel_milho * usdbrl
+        soja_brl_saca = soja_usd * sacas_por_bushel_soja * fx
+        milho_brl_saca = milho_usd * sacas_por_bushel_milho * fx
+        cafe_usd_lb = cafe_cents / 100.0
+        cafe_usd_saca = cafe_usd_lb * lb_por_saca
+        cafe_brl_saca = cafe_usd_saca * fx
 
-        # Café (US¢/lb -> USD/lb -> USD/saca -> BRL/saca)
-        LB_POR_KG      = 2.2046226218
-        LB_POR_SACA    = KG_POR_SACA * LB_POR_KG               # ≈ 132.277 lb
-        cafe_usd_lb    = cafe_cents / 100.0
-        cafe_usd_saca  = cafe_usd_lb * LB_POR_SACA
-        cafe_brl_saca  = cafe_usd_saca * usdbrl
+        logger.info(
+            f"[MARKET] USD/BRL={fx:.4f} | ZS=F={soja_usd} USD/bu | "
+            f"ZC=F={milho_usd} USD/bu | KC=F={cafe_cents} USc/lb"
+        )
 
-        def pack(preco_brl: float, ref_usd: float):
+        def pack(preco_brl: float, ref_usd: float, src: str = "yahoo"):
             return {
                 "preco": round(preco_brl, 2),
-                "variacao": 0.0,           # (opcional) calcular com close anterior
-                "tendencia": "—",          # placeholder
-                "fx": round(usdbrl, 4),
-                "ref_usd": ref_usd         # preço original em USD (ou US¢/lb no caso do café)
+                "variacao": 0.0,   # placeholder
+                "tendencia": "—",  # placeholder
+                "fx": round(fx, 4),
+                "ref_usd": ref_usd,
+                "source": src,
             }
 
         return {
-            "soja":  pack(soja_brl_saca,  soja_usd),
+            "soja":  pack(soja_brl_saca, soja_usd),
             "milho": pack(milho_brl_saca, milho_usd),
-            "cafe":  pack(cafe_brl_saca,  cafe_cents),
+            "cafe":  pack(cafe_brl_saca, cafe_cents),
         }
 
     except Exception as e:
-        logger.error(f"Market realtime error: {e}")
-        # fallback simples (mantém o app vivo)
+        logger.error(f"[MARKET] fallback: {e}")
         return {
-            "soja":  {"preco": 165.0, "variacao": 0.0, "tendencia": "—"},
-            "milho": {"preco":  75.0, "variacao": 0.0, "tendencia": "—"},
-            "cafe":  {"preco": 950.0, "variacao": 0.0, "tendencia": "—"},
+            "soja":  {"preco": 165.0, "variacao": 0.0, "tendencia": "—", "source": "fallback"},
+            "milho": {"preco":  75.0, "variacao": 0.0, "tendencia": "—", "source": "fallback"},
+            "cafe":  {"preco": 950.0, "variacao": 0.0, "tendencia": "—", "source": "fallback"},
         }
-# ------------------------------------------------------------------------------
 
-# ----------------------------------
-# Lifespan
-# ----------------------------------
+# =========================================================
+# Lifecycle
+# =========================================================
 @app.on_event("startup")
 async def startup_event():
     init_database()
     logger.info(f"CORS allow_origins={ALLOW_ORIGINS} | allow_origin_regex={ALLOW_REGEX}")
 
-# ----------------------------------
+# =========================================================
 # Endpoints
-# ----------------------------------
+# =========================================================
 @app.get("/")
 async def root():
-    return {"message": "TerraSynapse Enterprise API", "version": "2.0.0", "status": "online", "timestamp": datetime.utcnow().isoformat()}
+    return {
+        "message": "TerraSynapse Enterprise API",
+        "version": "2.0.0",
+        "status": "online",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "database": "online", "services": "operational"}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": "online",
+        "services": "operational"
+    }
 
 @app.post("/register")
 async def register_user(user_data: dict):
     try:
         conn = sqlite3.connect("terrasynapse.db")
         cur = conn.cursor()
+
         cur.execute("SELECT id FROM usuarios WHERE email = ?", (user_data["email"],))
         if cur.fetchone():
             conn.close()
             raise HTTPException(status_code=400, detail="Email já cadastrado")
+
         pwd_hash = bcrypt.hashpw(user_data["password"].encode("utf-8"), bcrypt.gensalt())
+
         cur.execute(
             """
             INSERT INTO usuarios (nome_completo, email, password_hash, perfil_profissional,
@@ -342,8 +377,12 @@ async def register_user(user_data: dict):
         conn.close()
 
         token = create_access_token({"sub": user_data["email"]})
-        return {"message": "Usuário cadastrado com sucesso", "access_token": token, "token_type": "bearer",
-                "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]}}
+        return {
+            "message": "Usuário cadastrado com sucesso",
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]},
+        }
     except Exception as e:
         logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Erro no cadastro")
@@ -356,20 +395,25 @@ async def login_user(credentials: dict):
         cur.execute("SELECT * FROM usuarios WHERE email = ?", (credentials["email"],))
         user = cur.fetchone()
         conn.close()
+
         if not user:
             raise HTTPException(status_code=401, detail="Email não encontrado")
         if not bcrypt.checkpw(credentials["password"].encode("utf-8"), user[3].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Senha incorreta")
 
         token = create_access_token({"sub": user[2]})
-        return {"message": "Login realizado com sucesso", "access_token": token, "token_type": "bearer",
-                "user": {"id": user[0], "nome": user[1], "email": user[2]}}
+        return {
+            "message": "Login realizado com sucesso",
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {"id": user[0], "nome": user[1], "email": user[2]},
+        }
     except Exception as e:
         logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail="Erro no login")
 
 @app.get("/weather/{lat}/{lon}")
-async def get_weather(lat: float, lon: float, user: dict = Depends(verify_token)):
+async def weather(lat: float, lon: float, user: dict = Depends(verify_token)):
     try:
         return {"status": "success", "data": await get_weather_data(lat, lon)}
     except Exception as e:
@@ -377,7 +421,7 @@ async def get_weather(lat: float, lon: float, user: dict = Depends(verify_token)
         raise HTTPException(status_code=500, detail="Erro ao buscar dados climáticos")
 
 @app.get("/satellite/{lat}/{lon}")
-async def get_satellite(lat: float, lon: float, user: dict = Depends(verify_token)):
+async def satellite(lat: float, lon: float, user: dict = Depends(verify_token)):
     try:
         return {"status": "success", "data": await get_ndvi_data(lat, lon)}
     except Exception as e:
@@ -393,19 +437,27 @@ async def market(user: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail="Erro ao buscar dados de mercado")
 
 @app.get("/dashboard/{lat}/{lon}")
-async def get_dashboard(lat: float, lon: float, user: dict = Depends(verify_token)):
+async def dashboard(lat: float, lon: float, user: dict = Depends(verify_token)):
     try:
         weather_data, ndvi_data, market_data = await asyncio.gather(
-            get_weather_data(lat, lon), get_ndvi_data(lat, lon), get_market_data()
+            get_weather_data(lat, lon),
+            get_ndvi_data(lat, lon),
+            get_market_data()
         )
 
         alertas = []
         if weather_data["et0"] > 6:
-            alertas.append({"tipo": "irrigacao", "prioridade": "alta",
-                            "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"})
+            alertas.append({
+                "tipo": "irrigacao",
+                "prioridade": "alta",
+                "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"
+            })
         if ndvi_data["ndvi"] < 0.5:
-            alertas.append({"tipo": "vegetacao", "prioridade": "media",
-                            "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"})
+            alertas.append({
+                "tipo": "vegetacao",
+                "prioridade": "media",
+                "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"
+            })
 
         soja_preco = market_data["soja"]["preco"]
         produtividade = 50 if ndvi_data["ndvi"] > 0.6 else 35
@@ -431,5 +483,8 @@ async def get_dashboard(lat: float, lon: float, user: dict = Depends(verify_toke
         logger.error(f"Dashboard error: {e}")
         raise HTTPException(status_code=500, detail="Erro ao gerar dashboard")
 
+# =========================================================
+# Execução local
+# =========================================================
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
