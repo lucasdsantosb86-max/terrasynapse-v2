@@ -1,11 +1,7 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
-/* Tema TerraSynapse */
-:root{
-  --ts-green: #2c5530;
-  --ts-green-2: #4a7c59;
-  --bg: #f7faf7;
-  --text: #0f172a;
+/* suas variáveis/ajustes */
+:root {
+  --ts-green:#166534; --ts-green-2:#16a34a; --bg:#f7faf7; --text:#0f172a;
 }
-html, body, #root { height: 100%; }
-body { background: var(--bg); color: var(--text); }
+body { background: linear-gradient(180deg,#f0fdf4,#ffffff); }
