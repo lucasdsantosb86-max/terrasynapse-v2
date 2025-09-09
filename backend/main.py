@@ -1,12 +1,14 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+import os
+import pathlib
 import sqlite3
 import bcrypt
 import jwt
 import uvicorn
 from datetime import datetime, timedelta
-import os
 import httpx
 import asyncio
 import math
@@ -16,11 +18,11 @@ import logging
 # Configuração básica
 # ----------------------------------
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("terrasynapse.backend")
 
-SECRET_KEY = "terrasynapse_enterprise_2024_secure"
+SECRET_KEY = os.getenv("SECRET_KEY", "terrasynapse_enterprise_2024_secure")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 app = FastAPI(
     title="TerraSynapse Enterprise API",
@@ -54,55 +56,70 @@ app.add_middleware(
 security = HTTPBearer()
 
 # ----------------------------------
-# DB
+# DB helpers (idempotente + thread-safe)
 # ----------------------------------
-def init_database():
+DB_PATH = os.getenv(
+    "DB_PATH",
+    str((pathlib.Path(__file__).parent / "terrasynapse.db").resolve())
+)
+
+def get_db() -> sqlite3.Connection:
+    # Permite acesso multi-thread do FastAPI/uvicorn
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    return conn
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    # Modo WAL melhora concorrência no Render/uvicorn
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_completo TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            perfil_profissional TEXT,
+            empresa_propriedade TEXT,
+            cidade TEXT,
+            estado TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS fazendas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER,
+            nome TEXT NOT NULL,
+            latitude REAL,
+            longitude REAL,
+            area_hectares REAL,
+            cultura_principal TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
+        )
+    """)
+
+    # Garantir índice único (caso antigo não tivesse)
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_email ON usuarios(email);")
+
+    conn.commit()
+
+def init_database() -> None:
     try:
-        conn = sqlite3.connect("terrasynapse.db")
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nome_completo TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                perfil_profissional TEXT,
-                empresa_propriedade TEXT,
-                cidade TEXT,
-                estado TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS fazendas (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_id INTEGER,
-                nome TEXT NOT NULL,
-                latitude REAL,
-                longitude REAL,
-                area_hectares REAL,
-                cultura_principal TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
-            )
-            """
-        )
-
-        conn.commit()
+        conn = get_db()
+        ensure_schema(conn)
         conn.close()
-        logger.info("Database initialized successfully")
+        logger.info(f"Database initialized at {DB_PATH}")
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
+        logger.exception(f"Database initialization error: {e}")
 
 # ----------------------------------
 # Auth helpers
 # ----------------------------------
-def create_access_token(data: dict):
+def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
@@ -113,7 +130,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        if email is None:
+        if not email:
             raise HTTPException(status_code=401, detail="Token inválido")
         return {"email": email}
     except jwt.PyJWTError:
@@ -125,9 +142,8 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 def calculate_et0(temp_max, temp_min, humidity, wind_speed, solar_radiation=None):
     try:
         temp_mean = (temp_max + temp_min) / 2
-        _ = 4098 * (0.6108 * math.exp(17.27 * temp_mean / (temp_mean + 237.3))) / (
-            (temp_mean + 237.3) ** 2
-        )
+        # (delta calculado mas não usado na versão simplificada)
+        _ = 4098 * (0.6108 * math.exp(17.27 * temp_mean / (temp_mean + 237.3))) / ((temp_mean + 237.3) ** 2)
         if solar_radiation is None:
             solar_radiation = 15
         et0 = (0.0023 * (temp_mean + 17.8) * abs(temp_max - temp_min) ** 0.5 * solar_radiation) / 2.45
@@ -142,9 +158,9 @@ async def get_weather_data(lat: float, lon: float):
         params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric", "lang": "pt_br"}
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, params=params)
-            if response.status_code == 200:
-                data = response.json()
+            resp = await client.get(url, params=params)
+            if resp.status_code == 200:
+                data = resp.json()
                 temp = data["main"]["temp"]
                 humidity = data["main"]["humidity"]
                 wind_speed = data["wind"]["speed"]
@@ -158,6 +174,8 @@ async def get_weather_data(lat: float, lon: float):
                     "et0": et0,
                     "recomendacao_irrigacao": "Necessária" if et0 > 5 else "Opcional",
                 }
+            else:
+                logger.warning(f"OpenWeather error {resp.status_code}: {resp.text[:180]}")
     except Exception as e:
         logger.error(f"Weather API error: {e}")
 
@@ -222,13 +240,19 @@ async def get_market_data():
 async def startup_event():
     init_database()
     logger.info(f"CORS allow_origins={ALLOW_ORIGINS} | allow_origin_regex={ALLOW_REGEX}")
+    logger.info(f"DB_PATH={DB_PATH}")
 
 # ----------------------------------
 # Endpoints
 # ----------------------------------
 @app.get("/")
 async def root():
-    return {"message": "TerraSynapse Enterprise API", "version": "2.0.0", "status": "online", "timestamp": datetime.utcnow().isoformat()}
+    return {
+        "message": "TerraSynapse Enterprise API",
+        "version": "2.0.0",
+        "status": "online",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 @app.get("/health")
 async def health():
@@ -237,58 +261,73 @@ async def health():
 @app.post("/register")
 async def register_user(user_data: dict):
     try:
-        conn = sqlite3.connect("terrasynapse.db")
+        conn = get_db()
+        ensure_schema(conn)  # garante tabelas
         cur = conn.cursor()
+
         cur.execute("SELECT id FROM usuarios WHERE email = ?", (user_data["email"],))
         if cur.fetchone():
             conn.close()
             raise HTTPException(status_code=400, detail="Email já cadastrado")
+
         pwd_hash = bcrypt.hashpw(user_data["password"].encode("utf-8"), bcrypt.gensalt())
-        cur.execute(
-            """
+        cur.execute("""
             INSERT INTO usuarios (nome_completo, email, password_hash, perfil_profissional,
                                   empresa_propriedade, cidade, estado)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user_data["nome_completo"],
-                user_data["email"],
-                pwd_hash.decode("utf-8"),
-                user_data.get("perfil_profissional", "Produtor Rural"),
-                user_data.get("empresa_propriedade", ""),
-                user_data.get("cidade", ""),
-                user_data.get("estado", ""),
-            ),
-        )
+        """, (
+            user_data["nome_completo"],
+            user_data["email"],
+            pwd_hash.decode("utf-8"),
+            user_data.get("perfil_profissional", "Produtor Rural"),
+            user_data.get("empresa_propriedade", ""),
+            user_data.get("cidade", ""),
+            user_data.get("estado", ""),
+        ))
         user_id = cur.lastrowid
         conn.commit()
         conn.close()
 
         token = create_access_token({"sub": user_data["email"]})
-        return {"message": "Usuário cadastrado com sucesso", "access_token": token, "token_type": "bearer",
-                "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]}}
+        return {
+            "message": "Usuário cadastrado com sucesso",
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]}
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Registration error: {e}")
+        logger.exception(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Erro no cadastro")
 
 @app.post("/login")
 async def login_user(credentials: dict):
     try:
-        conn = sqlite3.connect("terrasynapse.db")
+        conn = get_db()
+        ensure_schema(conn)  # garante tabelas
         cur = conn.cursor()
+
         cur.execute("SELECT * FROM usuarios WHERE email = ?", (credentials["email"],))
         user = cur.fetchone()
         conn.close()
+
         if not user:
             raise HTTPException(status_code=401, detail="Email não encontrado")
         if not bcrypt.checkpw(credentials["password"].encode("utf-8"), user[3].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Senha incorreta")
 
         token = create_access_token({"sub": user[2]})
-        return {"message": "Login realizado com sucesso", "access_token": token, "token_type": "bearer",
-                "user": {"id": user[0], "nome": user[1], "email": user[2]}}
+        return {
+            "message": "Login realizado com sucesso",
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {"id": user[0], "nome": user[1], "email": user[2]}
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Login error: {e}")
+        logger.exception(f"Login error: {e}")
         raise HTTPException(status_code=500, detail="Erro no login")
 
 @app.get("/weather/{lat}/{lon}")
@@ -324,11 +363,15 @@ async def get_dashboard(lat: float, lon: float, user: dict = Depends(verify_toke
 
         alertas = []
         if weather_data["et0"] > 6:
-            alertas.append({"tipo": "irrigacao", "prioridade": "alta",
-                            "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"})
+            alertas.append({
+                "tipo": "irrigacao", "prioridade": "alta",
+                "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"
+            })
         if ndvi_data["ndvi"] < 0.5:
-            alertas.append({"tipo": "vegetacao", "prioridade": "media",
-                            "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"})
+            alertas.append({
+                "tipo": "vegetacao", "prioridade": "media",
+                "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"
+            })
 
         soja_preco = market_data["soja"]["preco"]
         produtividade = 50 if ndvi_data["ndvi"] > 0.6 else 35
@@ -355,4 +398,4 @@ async def get_dashboard(lat: float, lon: float, user: dict = Depends(verify_toke
         raise HTTPException(status_code=500, detail="Erro ao gerar dashboard")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
