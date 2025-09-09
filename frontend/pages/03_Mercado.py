@@ -1,10 +1,14 @@
-import streamlit as st, pandas as pd
-st.set_page_config(page_title="Mercado", page_icon="💹")
-st.title("💹 Inteligência de Mercado")
+import streamlit as st
+from services.market import get_commodities
 
-df = pd.DataFrame([
-    {"Produto":"Soja","Preço (R$/sc)":165.50,"Variação (%)":2.3},
-    {"Produto":"Milho","Preço (R$/sc)":75.80,"Variação (%)":-1.2},
-    {"Produto":"Café","Preço (R$/sc)":1089.30,"Variação (%)":4.1},
-])
-st.dataframe(df, use_container_width=True)
+st.set_page_config(page_title="Mercado", page_icon="📈", layout="wide")
+st.title("📈 Preços de Commodities (ao vivo)")
+
+df = get_commodities()
+for _, row in df.iterrows():
+    col1, col2, col3 = st.columns([3,2,2])
+    col1.markdown(f"**{row['name']}**  \n_ticker:_ `{row['ticker']}`")
+    col2.metric("Preço", f"{row['price']:.2f}")
+    chg = row['change_pct']
+    col3.metric("Variação", f"{chg:+.2f}%")
+    st.divider()
