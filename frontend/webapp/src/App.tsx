@@ -1,5 +1,4 @@
-import React from "react";
-import "./index.css";
+﻿import React from "react";
 import TerraSynapseEnterprise from "./components/TerraSynapseEnterprise";
 
 export default function App() {
