@@ -1,5 +1,4 @@
-@import "./tailwind.css";
+@import "tailwindcss";
 
-/* ajustes globais */
 html, body, #root { height: 100%; }
 body { margin: 0; background: #f8fafc; }
