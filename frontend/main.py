@@ -1,6 +1,7 @@
 # TerraSynapse - Frontend Enterprise (Streamlit)
-# Visual Enterprise ++ : hero premium, navegação de páginas, cards glass, CTA, rodapé
-# Mantém compatibilidade com /login, /register, /weather, /satellite, /market, /dashboard
+# SPA estável: hero premium, navegação interna, localização com rerun,
+# alertas inteligentes e seções separadas sem perder sessão.
+# Compatível com: /login, /register, /dashboard/{lat}/{lon}, /market
 
 import streamlit as st
 import requests
@@ -135,33 +136,21 @@ hr{border-color:rgba(148,163,184,.16);}
 # ----------------------------------------------------------------------
 ENV_MODE = st.secrets.get("env", {}).get("MODE", "prod")  # "prod" | "dev"
 API_CFG   = st.secrets.get("api", {})
-BACKEND_URL = (API_CFG.get("API_BASE_URL_PROD") if ENV_MODE == "prod"
-               else API_CFG.get("API_BASE_URL_DEV")).rstrip("/")
+BACKEND_URL = (
+    API_CFG.get("API_BASE_URL_PROD")
+    if ENV_MODE == "prod"
+    else API_CFG.get("API_BASE_URL_DEV", API_CFG.get("API_BASE_URL_PROD", API_CFG.get("API_BASE_URL", "")))
+).rstrip("/") if API_CFG else ""
+if not BACKEND_URL:
+    st.stop()
 
 def api_url(path: str) -> str:
     return f"{BACKEND_URL}{path}"
 
-# --------------------- brand paths ---------------------
-BRAND_DIR = "assets/brand"
-def _theme_base():
-    try:
-        base = st.get_option("theme.base")
-        return base if base in ("dark", "light") else "dark"
-    except Exception:
-        return "dark"
-
-def wordmark_path():
-    # fundo escuro -> wordmark claro ; fundo claro -> wordmark escuro
-    return f"{BRAND_DIR}/terrasynapse-wordmark-light.svg" if _theme_base()=="dark" \
-           else f"{BRAND_DIR}/terrasynapse-wordmark-dark.svg"
-
-def hero_path():
-    return f"{BRAND_DIR}/terrasynapse-hero-dark.svg"
-
 # ----------------------------------------------------------------------
 # HTTP helpers
 # ----------------------------------------------------------------------
-def _request(method, endpoint, json=None, token=None, timeout=15):
+def _request(method, endpoint, json=None, token=None, timeout=20):
     url = api_url(endpoint)
     headers = {"Content-Type": "application/json"}
     if token:
@@ -218,48 +207,56 @@ if "user_data"  not in st.session_state: st.session_state.user_data  = None
 if "loc" not in st.session_state:
     lat, lon, cidade, uf = geo_por_ip()
     st.session_state.loc = {"mode":"ip", "lat":lat, "lon":lon, "cidade":cidade, "uf":uf}
-if "page" not in st.session_state:
-    st.session_state.page = "Home"
+if "view" not in st.session_state: st.session_state.view = "Dashboard"  # SPA nav
 
 # ----------------------------------------------------------------------
-# NAV TOP (com wordmark e status)
+# Status backend (badge)
 # ----------------------------------------------------------------------
 health_code, _health = _request("GET", "/health")
 online_badge = '<span class="ts-badge"><span class="ts-dot green"></span> ONLINE</span>' if health_code == 200 \
                else '<span class="ts-badge" style="color:#f87171;border-color:#f87171">OFFLINE</span>'
 
-col_top_l, col_top_r = st.columns([0.65, 0.35])
-with col_top_l:
-    st.markdown('<div class="ts-nav"><div class="inner">', unsafe_allow_html=True)
-    st.image(wordmark_path(), width=220)
-    st.markdown(f'<span class="ts-pill">{ENV_MODE.upper()} • {BACKEND_URL}</span>{online_badge}', unsafe_allow_html=True)
-    st.markdown('</div></div>', unsafe_allow_html=True)
-with col_top_r:
-    pass  # espaço
-
 # ----------------------------------------------------------------------
-# HERO (quando deslogado)
+# NAV TOP
 # ----------------------------------------------------------------------
-if not st.session_state.logged_in:
-    st.markdown("""
-    <div class="ts-hero">
-      <div style="display:flex;align-items:center;gap:16px;">
-        <div style="font-size:28px">🌾</div>
-        <div>
-          <h1 style="margin:0;padding:0;font-weight:800;letter-spacing:-.02em">TerraSynapse V2.0</h1>
-          <div style="color:var(--ts-muted)">Plataforma Enterprise de Monitoramento Agrícola</div>
-        </div>
-        <div style="margin-left:auto;display:flex;gap:.6rem;align-items:center;">
-          <span class="ts-badge">Portal Executivo</span>
-          """ + online_badge + """
-        </div>
-      </div>
+st.markdown(f"""
+<div class="ts-nav">
+  <div class="inner">
+    <div class="ts-brand">🌾 TerraSynapse</div>
+    <span class="ts-pill">{ENV_MODE.upper()} • {BACKEND_URL}</span>
+    {online_badge}
+    <div class="ts-links">
+      <a class="ts-link" href="#sobre">Sobre</a>
+      <a class="ts-link" href="#clima">Clima</a>
+      <a class="ts-link" href="#vegetacao">Vegetação</a>
+      <a class="ts-link" href="#mercado">Mercado</a>
+      <a class="ts-link" href="#contato">Contato</a>
     </div>
-    """, unsafe_allow_html=True)
-    st.image(hero_path(), use_container_width=True)
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# Sidebar — Portal Executivo
+# HERO — único word-mark + fundo hero.svg (sem duplicar títulos)
+# ----------------------------------------------------------------------
+hero_path = "assets/brand/terrasynapse-hero-dark.svg"
+wm_dark  = "assets/brand/terrasynapse-wordmark-dark.svg"
+st.markdown(f"""
+<div class="ts-hero" style="position:relative; overflow:hidden;">
+  <img src="{hero_path}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.85;" />
+  <div style="position:relative; display:flex; align-items:center; gap:16px; z-index:1;">
+    <img src="{wm_dark}" alt="TerraSynapse" style="height:54px; filter: drop-shadow(0 0 12px rgba(255,255,255,.15));" />
+    <div style="margin-left:auto; display:flex; gap:.6rem; align-items:center;">
+      <span class="ts-pill">{ENV_MODE.upper()} • {BACKEND_URL}</span>
+      {online_badge}
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+st.write("")
+
+# ----------------------------------------------------------------------
+# Sidebar — Portal Executivo + Navegação SPA
 # ----------------------------------------------------------------------
 with st.sidebar:
     st.header("🔐 Portal Executivo")
@@ -278,7 +275,7 @@ with st.sidebar:
                         st.session_state.user_token = body["access_token"]
                         st.session_state.user_data = body["user"]
                         st.success("✅ Login realizado com sucesso!")
-                        time.sleep(0.6); st.rerun()
+                        time.sleep(0.3); st.rerun()
                     else:
                         st.error("❌ Credenciais inválidas ou API indisponível.")
                 else:
@@ -310,7 +307,7 @@ with st.sidebar:
                         st.session_state.user_token = body["access_token"]
                         st.session_state.user_data = body["user"]
                         st.success("✅ Conta criada com sucesso!")
-                        time.sleep(0.6); st.rerun()
+                        time.sleep(0.3); st.rerun()
                     else:
                         st.error("❌ Erro no cadastro")
                 else:
@@ -325,17 +322,20 @@ with st.sidebar:
                     lat, lon, cidade, uf = geo_por_ip()
                     st.session_state.loc.update({"mode":"ip","lat":lat,"lon":lon,"cidade":cidade,"uf":uf})
                     st.success(f"Local: {cidade}-{uf} • {lat:.4f}, {lon:.4f}")
+                    st.rerun()
             elif mode == "Cidade/UF (precisa)":
                 c1,c2 = st.columns(2)
-                with c1: c = st.text_input("Cidade", value="Capinópolis")
-                with c2: u = st.selectbox("UF", ["MG","SP","GO","MT","MS","PR","RS","SC","BA","TO","MA","PI","CE",
-                                                 "RN","PB","PE","AL","SE","ES","RJ","AC","RO","AM","RR","PA","AP","DF"], index=0)
+                with c1: c = st.text_input("Cidade", value=st.session_state.loc.get("cidade","Capinópolis"))
+                with c2: u = st.selectbox("UF",
+                    ["MG","SP","GO","MT","MS","PR","RS","SC","BA","TO","MA","PI","CE","RN","PB","PE","AL","SE","ES","RJ","AC","RO","AM","RR","PA","AP","DF"],
+                    index=0 if st.session_state.loc.get("uf","MG")=="MG" else 1)
                 if st.button("📡 Buscar Coordenadas (OpenWeather)"):
                     coords = geocode_openweather(c, u)
                     if coords:
                         lat, lon = coords
                         st.session_state.loc.update({"mode":"geo","lat":lat,"lon":lon,"cidade":c,"uf":u})
                         st.success(f"Local: {c}-{u} • {lat:.4f}, {lon:.4f}")
+                        st.rerun()
                     else:
                         st.error("Não foi possível geocodificar. Verifique a API KEY do OpenWeather em secrets.")
             else:
@@ -345,10 +345,15 @@ with st.sidebar:
                 if st.button("Usar estas coordenadas"):
                     st.session_state.loc.update({"mode":"manual","lat":lat,"lon":lon})
                     st.success(f"Local setado • {lat:.4f}, {lon:.4f}")
+                    st.rerun()
 
-        if st.button("🚪 Logout", use_container_width=True):
-            st.session_state.update({"logged_in": False, "user_token": None, "user_data": None})
-            st.rerun()
+        st.divider()
+        # Navegação SPA (não perde sessão)
+        st.session_state.view = st.radio(
+            "Navegação",
+            ["Dashboard","Clima","Vegetação (NDVI)","Mercado","Rentabilidade"],
+            horizontal=False, index=0
+        )
 
         st.divider()
         if st.button("🔧 Diagnóstico do Sistema", use_container_width=True):
@@ -356,10 +361,15 @@ with st.sidebar:
             if code == 200: st.success("✅ APIs TerraSynapse Online"); st.json(health)
             else:           st.error("❌ Sistema Temporariamente Indisponível")
 
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.update({"logged_in": False, "user_token": None, "user_data": None})
+            st.rerun()
+
 # ----------------------------------------------------------------------
-# Funções de página (páginas “reais” dentro do mesmo main)
+# Seções (home deslogado)
 # ----------------------------------------------------------------------
-def page_home():
+def section_home_enterprise():
+    st.markdown('<div id="sobre"></div>', unsafe_allow_html=True)
     st.markdown("### TerraSynapse V2.0 Enterprise  ")
     st.caption("Plataforma Líder em Inteligência Agrícola")
 
@@ -376,6 +386,7 @@ def page_home():
             st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
+
     st.markdown('<div class="section-title">✨ Por que o TerraSynapse?</div>', unsafe_allow_html=True)
     st.markdown('<div class="grid">', unsafe_allow_html=True)
     cards = [
@@ -397,22 +408,106 @@ def page_home():
         '</div>', unsafe_allow_html=True
     )
 
-def page_clima():
+# ----------------------------------------------------------------------
+# Funções utilitárias para dados
+# ----------------------------------------------------------------------
+def fetch_dashboard_data():
     lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
+    code, dash = _request("GET", f"/dashboard/{lat}/{lon}", token=st.session_state.user_token)
+    if code == 200 and isinstance(dash, dict) and dash.get("status") == "success":
+        data = dash["data"]
+
+        # Alertas inteligentes adicionais (cliente)
+        extra_alertas = []
+        temp = data['clima']['temperatura']
+        umid = data['clima']['umidade']
+        vento = data['clima']['vento']
+        if temp >= 36 or (temp >= 34 and umid <= 25):
+            extra_alertas.append({"tipo":"calor","prioridade":"alta",
+                                  "mensagem":"Onda de calor — risco à sanidade das plantas e conforto animal."})
+        if umid <= 20 and vento >= 12:
+            extra_alertas.append({"tipo":"queimadas","prioridade":"alta",
+                                  "mensagem":"Ar muito seco e ventos fortes — risco elevado de queimadas."})
+        data["alertas"].extend(extra_alertas)
+        return data
+    return None
+
+# ----------------------------------------------------------------------
+# Seções logado (SPA)
+# ----------------------------------------------------------------------
+def page_dashboard():
+    data = fetch_dashboard_data()
+    if not data:
+        st.error("❌ Não foi possível carregar o dashboard agora. Verifique o login e tente novamente.")
+        return
+
+    # Local ativo
+    lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
+    cidade = st.session_state.loc.get("cidade",""); uf = st.session_state.loc.get("uf","")
+    st.markdown(
+        f'<div class="ts-badge"><span class="ts-dot green"></span>'
+        f' Local: {cidade}-{uf} • {lat:.4f}, {lon:.4f}</div>',
+        unsafe_allow_html=True
+    )
+
+    colA, colB = st.columns([1,1])
+    with colA:
+        if st.button("🔄 Atualizar Dados", type="primary"):
+            st.cache_data.clear(); st.rerun()
+    with colB:
+        st.caption("Dica: altere a localização na barra lateral para atualizar o contexto.")
+
+    st.markdown("---")
+
+    st.subheader("📊 Dashboard Executivo — Tempo Real")
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+        st.metric("🌡️ Temperatura", f"{data['clima']['temperatura']}°C", delta=f"Umidade: {data['clima']['umidade']}%")
+        st.markdown('</div>', unsafe_allow_html=True)
+    with k2:
+        st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+        st.metric("💧 ET0", f"{data['clima']['et0']} mm/dia", delta=("Crítico" if data['clima']['et0'] > 6 else "Normal"))
+        st.markdown('</div>', unsafe_allow_html=True)
+    with k3:
+        st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+        st.metric("🌱 NDVI", f"{data['vegetacao']['ndvi']}", delta=data['vegetacao']['status_vegetacao'])
+        st.markdown('</div>', unsafe_allow_html=True)
+    with k4:
+        st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+        rec = data['rentabilidade']['receita_por_hectare']
+        st.metric("💰 Receita/ha", f"R$ {rec:,.0f}", delta=f"{data['rentabilidade']['produtividade_estimada']} sc/ha")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown('<div class="section-title" id="vegetacao">⚠️ Centro de Alertas Inteligentes</div>', unsafe_allow_html=True)
+    if data["alertas"]:
+        for a in data["alertas"]:
+            (st.error if a["prioridade"]=="alta" else st.warning)(a["mensagem"])
+    else:
+        st.success("✅ SISTEMA OPERACIONAL: Nenhum alerta crítico detectado.")
+
+def page_clima():
+    data = fetch_dashboard_data()
+    if not data:
+        st.error("Não foi possível carregar dados climáticos.")
+        return
+
     st.subheader("🌡️ Climatologia de Precisão")
-    code, res = _request("GET", f"/weather/{lat}/{lon}", token=st.session_state.user_token)
-    if code == 200 and isinstance(res, dict) and res.get("status") == "success":
-        clima = res["data"]
-        col1,col2,col3,col4 = st.columns(4)
-        with col1: st.metric("Temperatura", f"{clima['temperatura']}°C")
-        with col2: st.metric("Umidade", f"{clima['umidade']}%")
-        with col3: st.metric("Vento", f"{clima['vento']} km/h")
-        with col4: st.metric("ET0", f"{clima['et0']} mm/dia", delta=("Crítico" if clima['et0']>6 else "Normal"))
-        st.write(f"**Pressão:** {clima['pressao']} hPa  |  **Condição:** {clima['descricao']}")
-        st.info(f"💧 Recomendação de irrigação: **{clima['recomendacao_irrigacao']}**")
-        # Gauge ET0
+    g1, g2 = st.columns(2)
+
+    with g1:
+        st.markdown("##### 📊 Condições Meteorológicas")
+        st.write(f"**Temperatura:** {data['clima']['temperatura']}°C")
+        st.write(f"**Umidade:** {data['clima']['umidade']}%")
+        st.write(f"**Vento:** {data['clima']['vento']} km/h")
+        st.write(f"**Pressão:** {data['clima']['pressao']} hPa")
+        st.write(f"**Condição:** {data['clima']['descricao']}")
+
+    with g2:
+        st.markdown("##### 💧 ET0 (Evapotranspiração)")
         fig = go.Figure(go.Indicator(
-            mode="gauge+number+delta", value=clima['et0'],
+            mode="gauge+number+delta", value=data['clima']['et0'],
             title={'text': "ET0 (mm/dia)"}, delta={'reference': 5},
             gauge={'axis': {'range': [None, 10]},
                    'bar': {'color': "#22c55e"},
@@ -421,100 +516,94 @@ def page_clima():
                              {'range': [6,10], 'color': "#ef4444"}],
                    'threshold': {'line': {'color': "#ef4444", 'width': 4}, 'thickness': .75, 'value': 6}}
         ))
-        fig.update_layout(height=300, margin=dict(l=20,r=20,t=30,b=10))
+        fig.update_layout(height=340, margin=dict(l=20,r=20,t=30,b=10))
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.error("Não foi possível carregar o clima agora.")
 
-def page_vegetacao():
-    lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
+    st.markdown("##### ✅ Recomendação")
+    st.write(f"**ET0:** {data['clima']['et0']} mm/dia — **Irrigação:** {data['clima']['recomendacao_irrigacao']}")
+
+def page_ndvi():
+    data = fetch_dashboard_data()
+    if not data:
+        st.error("Não foi possível carregar NDVI.")
+        return
+
     st.subheader("🛰️ NDVI Executivo")
-    code, res = _request("GET", f"/satellite/{lat}/{lon}", token=st.session_state.user_token)
-    if code == 200 and isinstance(res, dict) and res.get("status") == "success":
-        ndvi = res["data"]
-        c1,c2,c3 = st.columns(3)
-        with c1: st.metric("NDVI", ndvi["ndvi"])
-        with c2: st.metric("Status", ndvi["status_vegetacao"])
-        with c3: st.metric("Data", ndvi["data_analise"])
-        st.info(ndvi["recomendacao"])
-    else:
-        st.error("Não foi possível carregar o NDVI agora.")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("##### 🔎 Status da Vegetação")
+        st.write(f"**Valor:** {data['vegetacao']['ndvi']}")
+        st.write(f"**Status:** {data['vegetacao']['status_vegetacao']}")
+        st.write(f"**Data:** {data['vegetacao']['data_analise']}")
+    with c2:
+        st.markdown("##### 📋 Recomendações Técnicas")
+        st.info(data['vegetacao']['recomendacao'])
 
 def page_mercado():
-    st.subheader("📈 Mercado em Tempo Real")
-    code, res = _request("GET", "/market", token=st.session_state.user_token)
-    if code == 200 and isinstance(res, dict) and res.get("status") == "success":
-        com = res["data"]
-        df = pd.DataFrame([
-            {"Commodity":"Soja","Preço (R$/saca)":com["soja"]["preco"], "Variação %": com["soja"].get("variacao",0.0)},
-            {"Commodity":"Milho","Preço (R$/saca)":com["milho"]["preco"], "Variação %": com["milho"].get("variacao",0.0)},
-            {"Commodity":"Café","Preço (R$/saca)":com["cafe"]["preco"], "Variação %": com["cafe"].get("variacao",0.0)},
-        ])
-        colA, colB = st.columns([1,1])
-        with colA:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        with colB:
-            fig = px.bar(df, x="Commodity", y="Preço (R$/saca)")
-            fig.update_layout(height=320, margin=dict(l=20,r=20,t=10,b=10))
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.error("Não foi possível carregar o mercado agora.")
+    data = fetch_dashboard_data()
+    if not data:
+        st.error("Não foi possível carregar Mercado.")
+        return
+
+    st.subheader("📈 Mercado em Tempo Real (R$/saca)")
+    com = data["mercado"]
+    df = pd.DataFrame([
+        {"Commodity":"Soja","Preço":com["soja"]["preco"]},
+        {"Commodity":"Milho","Preço":com["milho"]["preco"]},
+        {"Commodity":"Café","Preço":com["cafe"]["preco"]}
+    ])
+    figb = px.bar(df, x="Commodity", y="Preço", title=None)
+    figb.update_layout(height=360, margin=dict(l=20,r=20,t=10,b=10))
+    st.plotly_chart(figb, use_container_width=True)
+
+    st.caption("Fonte: Yahoo Finance + Exchangerate.host (conversão USD/BRL).")
 
 def page_rentabilidade():
-    st.subheader("🤖 IA de Rentabilidade")
-    # Preços do mercado para cálculo
-    code, res = _request("GET", "/market", token=st.session_state.user_token)
-    if code == 200 and isinstance(res, dict) and res.get("status") == "success":
-        com = res["data"]
-    else:
-        st.warning("Sem mercado agora; usando preços padrão.")
-        com = {"soja":{"preco":165.0},"milho":{"preco":75.0},"cafe":{"preco":950.0}}
+    data = fetch_dashboard_data()
+    if not data:
+        st.error("Não foi possível calcular rentabilidade.")
+        return
 
+    st.subheader("🤖 IA de Rentabilidade")
     c1, c2, c3 = st.columns(3)
     with c1: area = st.number_input("🌾 Área (hectares)", min_value=1, value=10)
     with c2: cultura = st.selectbox("🌱 Cultura Principal", ["Soja","Milho","Café"])
     with c3: prod = st.number_input("📊 Produtividade (sacas/ha)", min_value=1, value=50)
-    preco = com[cultura.lower()]["preco"]
-    receita_total = area * prod * preco
-    custo_total   = area * 3000
-    lucro_total   = receita_total - custo_total
-    margem = (lucro_total/receita_total*100) if receita_total else 0
-    m1,m2,m3 = st.columns(3)
-    with m1: st.metric("Receita Total", f"R$ {receita_total:,.0f}")
-    with m2: st.metric("Custo Estimado", f"R$ {custo_total:,.0f}")
-    with m3: st.metric("Lucro Projetado", f"R$ {lucro_total:,.0f}")
-    st.caption(f"**Área:** {area} ha | **Produtividade:** {prod} sc/ha | **Preço:** R$ {preco}/saca | **Margem:** {margem:.1f}%")
+
+    if cultura.lower() in data['mercado']:
+        preco = data['mercado'][cultura.lower()]['preco']
+        receita_total = area * prod * preco
+        custo_total   = area * 3000
+        lucro_total   = receita_total - custo_total
+        margem = (lucro_total/receita_total*100) if receita_total else 0
+        m1,m2,m3 = st.columns(3)
+        with m1: st.metric("Receita Total", f"R$ {receita_total:,.0f}")
+        with m2: st.metric("Custo Estimado", f"R$ {custo_total:,.0f}")
+        with m3: st.metric("Lucro Projetado", f"R$ {lucro_total:,.0f}")
+        st.caption(f"**Área:** {area} ha | **Produtividade:** {prod} sc/ha | **Preço:** R$ {preco}/saca | **Margem:** {margem:.1f}%")
 
 # ----------------------------------------------------------------------
-# Navegação de páginas
+# Renderização
 # ----------------------------------------------------------------------
 if st.session_state.logged_in:
-    # Segmented nav simples para páginas
-    st.session_state.page = st.segmented_control(
-        "Navegação",
-        options=["Home","Clima","Vegetação","Mercado","Rentabilidade"],
-        default=st.session_state.page,
-        help="Troque a página sem perder o contexto.",
-    )
-
-    if st.session_state.page == "Home":
-        page_home()
-    elif st.session_state.page == "Clima":
+    view = st.session_state.view
+    if view == "Dashboard":
+        page_dashboard()
+    elif view == "Clima":
         page_clima()
-    elif st.session_state.page == "Vegetação":
-        page_vegetacao()
-    elif st.session_state.page == "Mercado":
+    elif view == "Vegetação (NDVI)":
+        page_ndvi()
+    elif view == "Mercado":
         page_mercado()
-    else:
+    elif view == "Rentabilidade":
         page_rentabilidade()
 else:
-    # Landing enterprise (deslogado)
-    page_home()
+    section_home_enterprise()
 
 # ----------------------------------------------------------------------
 # Rodapé (sempre)
 # ----------------------------------------------------------------------
-st.markdown('<div id="portal-executivo"></div>', unsafe_allow_html=True)
+st.markdown('<div id="contato"></div>', unsafe_allow_html=True)
 st.markdown("""
 <div class="footer">
   <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
