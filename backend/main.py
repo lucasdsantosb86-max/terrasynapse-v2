@@ -12,7 +12,6 @@ import httpx
 import asyncio
 import math
 import logging
-from typing import Optional, Dict, Any, Tuple
 
 # =========================================================
 # Configurações básicas
@@ -20,13 +19,9 @@ from typing import Optional, Dict, Any, Tuple
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("terrasynapse-backend")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "terrasynapse_enterprise_2024_secure")
+SECRET_KEY = "terrasynapse_enterprise_2024_secure"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-
-# Caminho do banco (estável no Render e local)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.getenv("DB_PATH", os.path.join(BASE_DIR, "terrasynapse.db"))
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 app = FastAPI(
     title="TerraSynapse Enterprise API",
@@ -38,11 +33,11 @@ app = FastAPI(
 # CORS dinâmico (com fallback seguro)
 # =========================================================
 DEFAULT_ORIGINS = [
-    "http://localhost:8501",                      # dev Streamlit
+    "http://localhost:8501",                     # dev Streamlit
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://app.terrasynapse.com",               # domínio do app
-    "https://terrasynapse-frontend.onrender.com", # subdomínio Render
+    "https://app.terrasynapse.com",              # domínio do app
+    "https://terrasynapse-frontend.onrender.com" # subdomínio Render
 ]
 env_origins = os.getenv("CORS_ORIGINS", "")
 ALLOW_ORIGINS = [o.strip() for o in env_origins.split(",") if o.strip()] or DEFAULT_ORIGINS
@@ -57,23 +52,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-security = HTTPBearer(auto_error=True)
+security = HTTPBearer()
 
 # =========================================================
-# Helpers de banco (SQLite)
+# Banco de dados (SQLite)
 # =========================================================
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    # Pragmas que deixam o SQLite mais robusto em produção
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
+DB_PATH = os.getenv("DB_PATH", "terrasynapse.db")
+
+def _connect_db():
+    # garante diretório quando usar caminho absoluto (ex.: /var/data/terrasynapse.db)
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+    return sqlite3.connect(DB_PATH)
 
 def init_database():
     try:
-        conn = get_conn()
+        conn = _connect_db()
         cur = conn.cursor()
 
         cur.execute(
@@ -112,7 +107,7 @@ def init_database():
         conn.close()
         logger.info(f"DB OK: sqlite inicializado em {DB_PATH}")
     except Exception as e:
-        logger.exception(f"Erro ao inicializar DB: {e}")
+        logger.error(f"Erro ao inicializar DB: {e}")
 
 # =========================================================
 # Auth helpers (JWT)
@@ -128,7 +123,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        if not email:
+        if email is None:
             raise HTTPException(status_code=401, detail="Token inválido")
         return {"email": email}
     except jwt.PyJWTError:
@@ -140,7 +135,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 def calculate_et0(temp_max, temp_min, humidity, wind_speed, solar_radiation=None) -> float:
     try:
         temp_mean = (temp_max + temp_min) / 2
-        # delta calculado, não usado diretamente (mantido pela completude)
+        # delta (não usado diretamente, mantido pela completude do método)
         _ = 4098 * (0.6108 * math.exp(17.27 * temp_mean / (temp_mean + 237.3))) / (
             (temp_mean + 237.3) ** 2
         )
@@ -204,13 +199,13 @@ async def get_ndvi_data(lat: float, lon: float) -> dict:
     """
     import random
     mes = datetime.now().month
-    if 3 <= mes <= 5:       # outono
+    if 3 <= mes <= 5:       # outono (plantio soja 2ª/ milho safrinha)
         ndvi_base = random.uniform(0.6, 0.8)
-    elif 6 <= mes <= 8:     # inverno
+    elif 6 <= mes <= 8:     # inverno (pós-colheita / palhada)
         ndvi_base = random.uniform(0.4, 0.6)
-    elif 9 <= mes <= 11:    # primavera
+    elif 9 <= mes <= 11:    # primavera (pico de crescimento)
         ndvi_base = random.uniform(0.7, 0.9)
-    else:                   # verão
+    else:                   # verão (amadurecimento/colheita)
         ndvi_base = random.uniform(0.5, 0.7)
 
     ndvi = round(ndvi_base, 3)
@@ -232,9 +227,6 @@ async def get_ndvi_data(lat: float, lon: float) -> dict:
     }
 
 # --------- Mercado com dados reais (Yahoo + FX) ----------
-_MARKET_CACHE: Dict[str, Any] = {"data": None, "ts": 0.0}
-_MARKET_TTL_SECONDS = int(os.getenv("MARKET_TTL_SECONDS", "300"))
-
 async def get_market_data() -> dict:
     """
     Preços em R$/saca (60 kg) para Soja, Milho e Café.
@@ -247,14 +239,8 @@ async def get_market_data() -> dict:
       - Milho (ZC=F): USD/bushel  | 1 bushel milho = 25.4 kg   -> 1 saca ≈ 2.3622 bushels
       - Café (KC=F): US cents/lb  | 1 saca = 60 kg = 132.277 lb
     """
-    import time as _time
-
-    # Cache simples p/ reduzir chamadas externas e estabilizar o app
-    now = _time.time()
-    if _MARKET_CACHE["data"] and (now - _MARKET_CACHE["ts"] < _MARKET_TTL_SECONDS):
-        return _MARKET_CACHE["data"]
-
     TICKERS = {"soja": "ZS=F", "milho": "ZC=F", "cafe": "KC=F"}
+
     UA_HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -265,6 +251,7 @@ async def get_market_data() -> dict:
 
     async def yahoo_price(symbol: str) -> float:
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+        # Removido http2=True para não exigir o pacote 'h2'
         async with httpx.AsyncClient(timeout=15.0, headers=UA_HEADERS) as client:
             r = await client.get(url)
             r.raise_for_status()
@@ -323,25 +310,19 @@ async def get_market_data() -> dict:
                 "source": src,
             }
 
-        data = {
+        return {
             "soja":  pack(soja_brl_saca, soja_usd),
             "milho": pack(milho_brl_saca, milho_usd),
             "cafe":  pack(cafe_brl_saca, cafe_cents),
         }
-        _MARKET_CACHE["data"] = data
-        _MARKET_CACHE["ts"] = now
-        return data
 
     except Exception as e:
         logger.error(f"[MARKET] fallback: {e}")
-        data = {
+        return {
             "soja":  {"preco": 165.0, "variacao": 0.0, "tendencia": "—", "source": "fallback"},
             "milho": {"preco":  75.0, "variacao": 0.0, "tendencia": "—", "source": "fallback"},
             "cafe":  {"preco": 950.0, "variacao": 0.0, "tendencia": "—", "source": "fallback"},
         }
-        _MARKET_CACHE["data"] = data
-        _MARKET_CACHE["ts"] = now
-        return data
 
 # =========================================================
 # Lifecycle
@@ -350,7 +331,6 @@ async def get_market_data() -> dict:
 async def startup_event():
     init_database()
     logger.info(f"CORS allow_origins={ALLOW_ORIGINS} | allow_origin_regex={ALLOW_REGEX}")
-    logger.info(f"DB_PATH={DB_PATH}")
 
 # =========================================================
 # Endpoints
@@ -370,29 +350,20 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "database": "online",
+        "db_path": DB_PATH,
         "services": "operational"
     }
 
-# ---------- helpers de validação ----------
-def _require_fields(data: Dict[str, Any], fields: Tuple[str, ...]):
-    missing = [f for f in fields if not data.get(f)]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Campos obrigatórios ausentes: {', '.join(missing)}")
-
-# ---------- Auth ----------
 @app.post("/register")
 async def register_user(user_data: dict):
     try:
-        # validação mínima de payload
-        _require_fields(user_data, ("nome_completo", "email", "password"))
-        email = user_data["email"].strip().lower()
-
-        conn = get_conn()
+        conn = _connect_db()
         cur = conn.cursor()
-        cur.execute("SELECT id FROM usuarios WHERE email = ?", (email,))
+
+        cur.execute("SELECT id FROM usuarios WHERE email = ?", (user_data["email"],))
         if cur.fetchone():
             conn.close()
-            raise HTTPException(status_code=409, detail="Email já cadastrado")
+            raise HTTPException(status_code=400, detail="Email já cadastrado")
 
         pwd_hash = bcrypt.hashpw(user_data["password"].encode("utf-8"), bcrypt.gensalt())
 
@@ -404,7 +375,7 @@ async def register_user(user_data: dict):
             """,
             (
                 user_data["nome_completo"],
-                email,
+                user_data["email"],
                 pwd_hash.decode("utf-8"),
                 user_data.get("perfil_profissional", "Produtor Rural"),
                 user_data.get("empresa_propriedade", ""),
@@ -416,50 +387,42 @@ async def register_user(user_data: dict):
         conn.commit()
         conn.close()
 
-        token = create_access_token({"sub": email})
+        token = create_access_token({"sub": user_data["email"]})
         return {
             "message": "Usuário cadastrado com sucesso",
             "access_token": token,
             "token_type": "bearer",
-            "user": {"id": user_id, "nome": user_data["nome_completo"], "email": email},
+            "user": {"id": user_id, "nome": user_data["nome_completo"], "email": user_data["email"]},
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.exception(f"Registration error: {e}")
+        logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Erro no cadastro")
 
 @app.post("/login")
 async def login_user(credentials: dict):
     try:
-        _require_fields(credentials, ("email", "password"))
-        email = credentials["email"].strip().lower()
-
-        conn = get_conn()
+        conn = _connect_db()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM usuarios WHERE email = ?", (email,))
+        cur.execute("SELECT * FROM usuarios WHERE email = ?", (credentials["email"],))
         user = cur.fetchone()
         conn.close()
 
         if not user:
             raise HTTPException(status_code=401, detail="Email não encontrado")
-        if not bcrypt.checkpw(credentials["password"].encode("utf-8"), user["password_hash"].encode("utf-8")):
+        if not bcrypt.checkpw(credentials["password"].encode("utf-8"), user[3].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Senha incorreta")
 
-        token = create_access_token({"sub": user["email"]})
+        token = create_access_token({"sub": user[2]})
         return {
             "message": "Login realizado com sucesso",
             "access_token": token,
             "token_type": "bearer",
-            "user": {"id": user["id"], "nome": user["nome_completo"], "email": user["email"]},
+            "user": {"id": user[0], "nome": user[1], "email": user[2]},
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.exception(f"Login error: {e}")
+        logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail="Erro no login")
 
-# ---------- Dados protegidos ----------
 @app.get("/weather/{lat}/{lon}")
 async def weather(lat: float, lon: float, user: dict = Depends(verify_token)):
     try:
@@ -535,5 +498,4 @@ async def dashboard(lat: float, lon: float, user: dict = Depends(verify_token)):
 # Execução local
 # =========================================================
 if __name__ == "__main__":
-    # Para rodar local: uvicorn backend.main:app --reload --port 8000
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    uvicorn.run(app, host="0.0.0.0", port=8000)
