@@ -265,7 +265,7 @@ async def get_market_data() -> dict:
 
     async def yahoo_price(symbol: str) -> float:
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
-        async with httpx.AsyncClient(timeout=15.0, headers=UA_HEADERS, http2=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, headers=UA_HEADERS) as client:
             r = await client.get(url)
             r.raise_for_status()
             data = r.json()
