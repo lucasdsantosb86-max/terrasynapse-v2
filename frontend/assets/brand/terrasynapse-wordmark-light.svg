@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="160" viewBox="0 0 1024 160">
+  <style>
+    .icon { fill:none; stroke:#0E8C4F; stroke-width:10; stroke-linecap:round; stroke-linejoin:round }
+    .name { fill:#0D1117; font: 700 96px "Inter", "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  </style>
+  <!-- icon -->
+  <g transform="translate(20,20) scale(1.05)">
+    <circle cx="60" cy="60" r="52" class="icon"/>
+    <path d="M12,78c18-6 34-6 48,12" class="icon"/>
+    <path d="M60,90c16-18 34-18 48-12" class="icon"/>
+    <path d="M60,72v-16l-14-10" class="icon"/>
+    <path d="M60,56l16-12" class="icon"/>
+    <circle cx="44" cy="46" r="6" class="icon"/>
+    <circle cx="76" cy="40" r="6" class="icon"/>
+    <circle cx="88" cy="60" r="6" class="icon"/>
+  </g>
+  <!-- name -->
+  <text x="170" y="112" class="name">TerraSynapse</text>
+</svg>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 128 128">
+  <style>.s{fill:none;stroke:currentColor;stroke-width:6;stroke-linecap:round;stroke-linejoin:round}</style>
+  <circle cx="64" cy="64" r="56" class="s"/>
+  <path d="M16,84c18-6 34-6 48,12" class="s"/>
+  <path d="M64,96c16-18 34-18 48-12" class="s"/>
+  <path d="M64,76v-16l-14-10" class="s"/>
+  <path d="M64,60l16-12" class="s"/>
+  <circle cx="48" cy="50" r="6" class="s"/>
+  <circle cx="80" cy="44" r="6" class="s"/>
+  <circle cx="92" cy="64" r="6" class="s"/>
+</svg>
