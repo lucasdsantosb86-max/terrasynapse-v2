@@ -57,18 +57,9 @@ security = HTTPBearer()
 # =========================================================
 # Banco de dados (SQLite)
 # =========================================================
-DB_PATH = os.getenv("DB_PATH", "terrasynapse.db")
-
-def _connect_db():
-    # garante diretório quando usar caminho absoluto (ex.: /var/data/terrasynapse.db)
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-    return sqlite3.connect(DB_PATH)
-
 def init_database():
     try:
-        conn = _connect_db()
+        conn = sqlite3.connect("terrasynapse.db")
         cur = conn.cursor()
 
         cur.execute(
@@ -105,7 +96,7 @@ def init_database():
 
         conn.commit()
         conn.close()
-        logger.info(f"DB OK: sqlite inicializado em {DB_PATH}")
+        logger.info("DB OK: sqlite inicializado")
     except Exception as e:
         logger.error(f"Erro ao inicializar DB: {e}")
 
@@ -251,8 +242,7 @@ async def get_market_data() -> dict:
 
     async def yahoo_price(symbol: str) -> float:
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
-        # Removido http2=True para não exigir o pacote 'h2'
-        async with httpx.AsyncClient(timeout=15.0, headers=UA_HEADERS) as client:
+        async with httpx.AsyncClient(timeout=15.0, headers=UA_HEADERS, http2=True) as client:
             r = await client.get(url)
             r.raise_for_status()
             data = r.json()
@@ -333,7 +323,7 @@ async def startup_event():
     logger.info(f"CORS allow_origins={ALLOW_ORIGINS} | allow_origin_regex={ALLOW_REGEX}")
 
 # =========================================================
-# Endpoints
+# Endpoints (protegidos por token)
 # =========================================================
 @app.get("/")
 async def root():
@@ -350,14 +340,13 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "database": "online",
-        "db_path": DB_PATH,
         "services": "operational"
     }
 
 @app.post("/register")
 async def register_user(user_data: dict):
     try:
-        conn = _connect_db()
+        conn = sqlite3.connect("terrasynapse.db")
         cur = conn.cursor()
 
         cur.execute("SELECT id FROM usuarios WHERE email = ?", (user_data["email"],))
@@ -401,7 +390,7 @@ async def register_user(user_data: dict):
 @app.post("/login")
 async def login_user(credentials: dict):
     try:
-        conn = _connect_db()
+        conn = sqlite3.connect("terrasynapse.db")
         cur = conn.cursor()
         cur.execute("SELECT * FROM usuarios WHERE email = ?", (credentials["email"],))
         user = cur.fetchone()
@@ -493,6 +482,81 @@ async def dashboard(lat: float, lon: float, user: dict = Depends(verify_token)):
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         raise HTTPException(status_code=500, detail="Erro ao gerar dashboard")
+
+# =========================================================
+# ENDPOINTS PÚBLICOS (somente leitura) — ADICIONADOS
+# =========================================================
+@app.get("/market-public")
+async def market_public():
+    """Preços de commodities sem exigir token (somente leitura)."""
+    try:
+        return {"status": "success", "data": await get_market_data()}
+    except Exception as e:
+        logger.error(f"Market public endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao buscar dados de mercado (público)")
+
+@app.get("/dashboard-public/{lat}/{lon}")
+async def dashboard_public(lat: float, lon: float):
+    """Dashboard sem exigir token (somente leitura, sem dados do usuário)."""
+    try:
+        weather_data, ndvi_data, market_data = await asyncio.gather(
+            get_weather_data(lat, lon),
+            get_ndvi_data(lat, lon),
+            get_market_data()
+        )
+
+        alertas = []
+        if weather_data["et0"] > 6:
+            alertas.append({
+                "tipo": "irrigacao",
+                "prioridade": "alta",
+                "mensagem": f"ET0 elevada ({weather_data['et0']}mm) - Irrigação recomendada"
+            })
+        if ndvi_data["ndvi"] < 0.5:
+            alertas.append({
+                "tipo": "vegetacao",
+                "prioridade": "media",
+                "mensagem": f"NDVI baixo ({ndvi_data['ndvi']}) - Verificar pragas/doenças"
+            })
+
+        soja_preco = market_data["soja"]["preco"]
+        produtividade = 50 if ndvi_data["ndvi"] > 0.6 else 35
+        receita_ha = produtividade * soja_preco
+
+        return {
+            "status": "success",
+            "data": {
+                "clima": weather_data,
+                "vegetacao": ndvi_data,
+                "mercado": market_data,
+                "alertas": alertas,
+                "rentabilidade": {
+                    "cultura": "Soja",
+                    "produtividade_estimada": produtividade,
+                    "preco_saca": soja_preco,
+                    "receita_por_hectare": round(receita_ha, 2),
+                },
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Dashboard public error: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao gerar dashboard (público)")
+
+@app.post("/auth/guest")
+def auth_guest():
+    """
+    Gera um token de convidado (escopo leitura).
+    Útil se quiser continuar usando /market e /dashboard protegidos,
+    mas entregar um token automático e curto.
+    """
+    payload = {"sub": "guest@terrasynapse", "role": "guest"}
+    token = create_access_token(payload)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"id": 0, "nome": "Convidado", "email": "guest@terrasynapse"}
+    }
 
 # =========================================================
 # Execução local
