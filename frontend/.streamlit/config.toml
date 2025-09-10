@@ -1,7 +1,12 @@
 [theme]
 base="dark"
-primaryColor="#22c55e"
-backgroundColor="#0b1220"
-secondaryBackgroundColor="#111827"
-textColor="#e5e7eb"
+primaryColor="#22c55e"     # verde TerraSynapse
+backgroundColor="#0F172A"  # azul-escuro sofisticado
+secondaryBackgroundColor="#0B1320"
+textColor="#E5E7EB"
 font="sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
