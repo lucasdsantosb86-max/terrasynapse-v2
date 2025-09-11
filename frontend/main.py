@@ -1,18 +1,19 @@
 # TerraSynapse - Frontend Enterprise (Streamlit)
 # Navegação única por view (Dashboard/Clima/Vegetação/Mercado/Rentabilidade)
-# Hero e branding organizados, login elegante, alertas práticos e auto-refresh.
-# Compatível com: /login, /register, /dashboard/{lat}/{lon}, /market
+# Patch incremental: cache/UX, login premium, sinais agronômicos, tendência de risco,
+# checklist DEV/PROD, correção deprecation (use_container_width), sem regressões.
 
 import streamlit as st
 import requests
 import time
 from datetime import datetime
+import math
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
 # ----------------------------------------------------------------------
-# Configuração base
+# Configuração base (deve ser a 1ª chamada st.*)
 # ----------------------------------------------------------------------
 st.set_page_config(
     page_title="TerraSynapse - Plataforma Agrícola Enterprise",
@@ -40,10 +41,7 @@ html, body, [class*="css"] { font-family: 'Inter', system-ui; color: var(--ts-te
 section.main > div { padding-top:.4rem; }
 
 /* TOP BAR + NAV */
-.ts-top {
-  display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;
-  margin-bottom: .25rem;
-}
+.ts-top { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; margin-bottom:.25rem; }
 .ts-pill {
   border:1px solid rgba(148,163,184,.25); border-radius:999px; padding:.35rem .7rem;
   color:var(--ts-muted); font-size:.82rem;
@@ -56,13 +54,13 @@ section.main > div { padding-top:.4rem; }
 }
 .ts-dot{width:.55rem;height:.55rem;border-radius:50%;}
 .ts-dot.green{background:var(--ts-green)}
-.navbar { display:flex; gap:.35rem; flex-wrap:wrap; margin-left:auto; }
-.stButton > button.ts-tab {
+.navbar{ display:flex; gap:.35rem; flex-wrap:wrap; margin-left:auto; }
+div.stButton > button.ts-tab {
   background: transparent; border:1px solid rgba(148,163,184,.22);
   color: var(--ts-muted); padding:.42rem .75rem; border-radius:10px; font-weight:700;
 }
-.stButton > button.ts-tab:hover { border-color:rgba(148,163,184,.35); color:var(--ts-text); }
-.stButton > button.ts-tab.active { background: var(--ts-green); color:#04110a; border-color:transparent; }
+div.stButton > button.ts-tab:hover { border-color:rgba(148,163,184,.35); color:var(--ts-text); }
+div.stButton > button.ts-tab.active { background: var(--ts-green); color:#04110a; border-color:transparent; }
 
 /* HERO (somente na home deslogada) */
 .ts-hero{
@@ -124,18 +122,24 @@ def api_url(path: str) -> str:
     return f"{BACKEND_URL}{path}"
 
 # ----------------------------------------------------------------------
-# HTTP helpers
+# HTTP helpers (com reuso de conexão) + cache leve
 # ----------------------------------------------------------------------
+_session = requests.Session()
+_adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=1)
+_session.mount("http://", _adapter)
+_session.mount("https://", _adapter)
+
 def api_request(method, endpoint, json=None, token=None, timeout=15):
+    """Helper de requisições (GET/POST). Retorna (status_code, body)."""
     url = api_url(endpoint)
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
         if method == "GET":
-            r = requests.get(url, headers=headers, timeout=timeout)
+            r = _session.get(url, headers=headers, timeout=timeout)
         else:
-            r = requests.post(url, headers=headers, json=json, timeout=timeout)
+            r = _session.post(url, headers=headers, json=json, timeout=timeout)
         try:
             body = r.json()
         except Exception:
@@ -144,12 +148,21 @@ def api_request(method, endpoint, json=None, token=None, timeout=15):
     except requests.exceptions.RequestException as e:
         return 0, {"detail": f"connection_error: {e}"}
 
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_health():
+    return api_request("GET", "/health")
+
+@st.cache_data(ttl=45, show_spinner=False)
+def cached_dashboard(lat: float, lon: float, token: str|None):
+    return api_request("GET", f"/dashboard/{lat}/{lon}", token=token)
+
 # ----------------------------------------------------------------------
 # Geolocalização
 # ----------------------------------------------------------------------
+@st.cache_data(ttl=600, show_spinner=False)
 def geo_por_ip():
     try:
-        r = requests.get("https://ipapi.co/json/", timeout=8)
+        r = _session.get("https://ipapi.co/json/", timeout=8)
         if r.status_code == 200:
             d = r.json()
             return float(d["latitude"]), float(d["longitude"]), d.get("city",""), d.get("region","")
@@ -159,6 +172,7 @@ def geo_por_ip():
     return float(g.get("DEFAULT_LAT", -15.78)), float(g.get("DEFAULT_LON", -47.93)), \
            g.get("DEFAULT_CITY","Brasília"), g.get("DEFAULT_STATE","DF")
 
+@st.cache_data(ttl=24*3600, show_spinner=False)
 def geocode_openweather(cidade:str, uf:str):
     key = st.secrets.get("openweather", {}).get("API_KEY", "")
     if not key:
@@ -166,7 +180,7 @@ def geocode_openweather(cidade:str, uf:str):
     try:
         url = "https://api.openweathermap.org/geo/1.0/direct"
         params = {"q": f"{cidade},{uf},BR", "limit": 1, "appid": key}
-        r = requests.get(url, params=params, timeout=10)
+        r = _session.get(url, params=params, timeout=10)
         if r.status_code == 200 and isinstance(r.json(), list) and r.json():
             d = r.json()[0]
             return float(d["lat"]), float(d["lon"])
@@ -175,23 +189,81 @@ def geocode_openweather(cidade:str, uf:str):
     return None
 
 # ----------------------------------------------------------------------
-# Sessão
+# Sessão + query param inicial
 # ----------------------------------------------------------------------
 if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if "user_token" not in st.session_state: st.session_state.user_token = None
-if "user_data"  not in st.session_state: st.session_state.user_data  = None
+if "user_data"  not in st.session_state: st.session_state.user_data  = {}
 if "loc" not in st.session_state:
     lat, lon, cidade, uf = geo_por_ip()
     st.session_state.loc = {"mode":"ip", "lat":lat, "lon":lon, "cidade":cidade, "uf":uf}
 if "view" not in st.session_state:
-    st.session_state.view = "dashboard"  # dashboard | clima | vegetacao | mercado | rent
+    # respeita ?view=... (dashboard|clima|vegetacao|mercado|rent)
+    try:
+        qp = st.query_params
+        if "view" in qp:
+            st.session_state.view = qp.get("view")
+        else:
+            st.session_state.view = "dashboard"
+    except Exception:
+        st.session_state.view = st.experimental_get_query_params().get("view", ["dashboard"])[0]
 if "auto_refresh" not in st.session_state:
     st.session_state.auto_refresh = False
+if "trend" not in st.session_state:
+    st.session_state.trend = {"et0": [], "ndvi": [], "ts": []}
+
+# ----------------------------------------------------------------------
+# Métricas derivadas (sinais agronômicos)
+# ----------------------------------------------------------------------
+def heat_index_c(temp_c: float, rh: float) -> float:
+    """Índice de calor (Rothfusz) aproximado. Retorna em °C."""
+    # Válido para T > ~26°C e RH > 40%. Caso contrário, retorna T.
+    if temp_c < 26 or rh < 40:
+        return temp_c
+    T = temp_c * 9/5 + 32
+    R = rh
+    HI = (-42.379 + 2.04901523*T + 10.14333127*R
+          - 0.22475541*T*R - 6.83783e-3*T*T - 5.481717e-2*R*R
+          + 1.22874e-3*T*T*R + 8.5282e-4*T*R*R - 1.99e-6*T*T*R*R)
+    # Ajustes empíricos
+    if R < 13 and 80 <= T <= 112:
+        HI -= ((13 - R)/4)*math.sqrt((17 - abs(T-95.))/17)
+    if R > 85 and 80 <= T <= 87:
+        HI += 0.02*(R-85)*(87-T)
+    return (HI - 32) * 5/9
+
+def vpd_kpa(temp_c: float, rh: float) -> float:
+    """Déficit de pressão de vapor (kPa) ~ conforto 0.8–1.2; alto >2.0."""
+    es = 0.6108 * math.exp((17.27*temp_c)/(temp_c+237.3))
+    return es * (1 - rh/100)
+
+def thi_cattle(temp_c: float, rh: float) -> float:
+    """THI bovino (°C): quanto maior, mais estresse térmico."""
+    return temp_c - (0.55 - 0.0055*rh)*(temp_c - 14.5)
+
+def class_heat_index(hi_c: float) -> str:
+    if hi_c >= 41: return "Perigo extremo"
+    if hi_c >= 32: return "Perigo"
+    if hi_c >= 27: return "Alerta"
+    return "Conforto"
+
+def class_vpd(vpd: float) -> str:
+    if vpd >= 2.0: return "Estresse hídrico"
+    if vpd >= 1.2: return "Alto"
+    if vpd >= 0.8: return "Ideal"
+    if vpd >= 0.4: return "Baixo (risco doença)"
+    return "Muito baixo"
+
+def class_thi(thi: float) -> str:
+    if thi >= 78: return "Severo"
+    if thi >= 74: return "Alto"
+    if thi >= 70: return "Moderado"
+    return "Conforto"
 
 # ----------------------------------------------------------------------
 # Top bar: status + nav (sem abrir nova aba)
 # ----------------------------------------------------------------------
-health_code, _health = api_request("GET", "/health")
+health_code, _health = cached_health()
 online_badge = ('<span class="ts-badge"><span class="ts-dot green"></span> ONLINE</span>'
                 if health_code == 200 else
                 '<span class="ts-badge" style="color:#f87171;border-color:#f87171">OFFLINE</span>')
@@ -209,39 +281,29 @@ def topbar_and_nav():
                   ("mercado","Mercado"), ("rent","Rentabilidade")]
         for i,(key,label) in enumerate(labels):
             active = "active" if st.session_state.view == key else ""
-            if cols[i].button(label, key=f"nav_{key}", use_container_width=True, help=label):
+            if cols[i].button(label, key=f"nav_{key}", use_container_width=True):
                 st.session_state.view = key
-                try:
-                    # Streamlit novo
-                    st.query_params.update({"view": key})
-                except Exception:
-                    # Compatível com versões antigas
-                    st.experimental_set_query_params(view=key)
+                try: st.query_params.update({"view": key})
+                except Exception: st.experimental_set_query_params(view=key)
                 st.rerun()
-            # aplica classe visual
-            st.markdown(
-                f"<script>var el = parent.document.querySelectorAll('button[k='{f'nav_{key}'}']');</script>",
-                unsafe_allow_html=True
-            )
-        # melhora estilo dos botões da navbar
-        st.markdown("""
-            <style>
-            div.stButton > button {padding:.42rem .75rem; border-radius:10px;}
-            div.stButton:nth-child(1) > button { }
-            </style>
-        """, unsafe_allow_html=True)
+            # Estilo dos botões
+            st.markdown("""
+                <style>
+                  div.stButton > button {padding:.42rem .75rem; border-radius:10px;}
+                </style>
+            """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# Sidebar — Portal Executivo
+# Sidebar — Portal Executivo (com checklist DEV/PROD)
 # ----------------------------------------------------------------------
 with st.sidebar:
     st.header("🔐 Portal Executivo")
 
-    # Mensagem institucional para não logado
+    # Mensagem institucional para não logado (login premium curto)
     if not st.session_state.logged_in:
         st.info(
             "Bem-vindo ao **TerraSynapse** — Plataforma Enterprise de Inteligência Agrícola.\n\n"
-            "Acesse com seu email corporativo para ver **clima**, **vegetação (NDVI)**, **mercado** e **rentabilidade** em tempo real."
+            "Crie sua conta para acessar **clima**, **NDVI**, **mercado** e **rentabilidade** em tempo real."
         )
         st.caption("📞 WhatsApp: **(34) 99972-9740**  •  📧 **terrasynapse@terrasynapse.com**")
 
@@ -253,13 +315,14 @@ with st.sidebar:
             password = st.text_input("🔒 Senha", type="password", key="login_password")
             if st.button("🚀 Entrar", type="primary", use_container_width=True):
                 if email and password:
-                    code, body = api_request("POST", "/login", json={"email": email, "password": password})
+                    with st.spinner("Autenticando..."):
+                        code, body = api_request("POST", "/login", json={"email": email, "password": password})
                     if code == 200 and isinstance(body, dict) and "access_token" in body:
                         st.session_state.logged_in = True
                         st.session_state.user_token = body["access_token"]
-                        st.session_state.user_data = body["user"]
+                        st.session_state.user_data = body.get("user", {})
                         st.success("✅ Login realizado com sucesso!")
-                        time.sleep(0.6); st.rerun()
+                        time.sleep(0.5); st.rerun()
                     else:
                         st.error("❌ Credenciais inválidas ou API indisponível.")
                 else:
@@ -286,19 +349,21 @@ with st.sidebar:
                         "perfil_profissional": perfil, "empresa_propriedade": empresa,
                         "cidade": cidade, "estado": estado
                     }
-                    code, body = api_request("POST", "/register", json=payload)
+                    with st.spinner("Criando sua conta..."):
+                        code, body = api_request("POST", "/register", json=payload)
                     if code == 200 and isinstance(body, dict) and "access_token" in body:
                         st.session_state.logged_in = True
                         st.session_state.user_token = body["access_token"]
-                        st.session_state.user_data = body["user"]
+                        st.session_state.user_data = body.get("user", {})
                         st.success("✅ Conta criada com sucesso!")
-                        time.sleep(0.6); st.rerun()
+                        time.sleep(0.5); st.rerun()
                     else:
                         st.error("❌ Erro no cadastro")
                 else:
                     st.warning("⚠️ Preencha os obrigatórios")
     else:
-        st.success(f"👋 Bem-vindo, {st.session_state.user_data['nome']}!")
+        nome_exib = st.session_state.user_data.get("nome") or st.session_state.user_data.get("nome_completo") or "Usuário"
+        st.success(f"👋 Bem-vindo, {nome_exib}!")
         with st.expander("📍 Local de Trabalho", expanded=True):
             mode = st.radio("Modo", ["Automática (IP)", "Cidade/UF (precisa)", "Coordenadas"], horizontal=False)
             if mode == "Automática (IP)":
@@ -333,7 +398,7 @@ with st.sidebar:
 
         st.checkbox("⚡ Auto-refresh a cada 45s", key="auto_refresh")
         if st.button("🚪 Logout", use_container_width=True):
-            st.session_state.update({"logged_in": False, "user_token": None, "user_data": None})
+            st.session_state.update({"logged_in": False, "user_token": None, "user_data": {}})
             st.rerun()
 
     st.divider()
@@ -342,12 +407,23 @@ with st.sidebar:
         if code == 200: st.success("✅ APIs TerraSynapse Online"); st.json(health)
         else:           st.error("❌ Sistema Temporariamente Indisponível")
 
+    with st.expander("🧪 Ambiente & Deploy (checklist rápido)", expanded=False):
+        ok_api = bool(BACKEND_URL)
+        ok_mode = ENV_MODE in ("prod","dev")
+        ok_geo = "DEFAULT_LAT" in st.secrets.get("geo",{}) and "DEFAULT_LON" in st.secrets.get("geo",{})
+        ok_ow  = bool(st.secrets.get("openweather",{}).get("API_KEY",""))
+        st.write(f"• MODE: **{ENV_MODE}** {'✅' if ok_mode else '❌'}")
+        st.write(f"• Backend URL: **{BACKEND_URL}** {'✅' if ok_api else '❌'}")
+        st.write(f"• OpenWeather API_KEY {'✅' if ok_ow else '❌'}")
+        st.write(f"• Geo defaults (lat/lon) {'✅' if ok_geo else '❌'}")
+        st.caption("Dica: secrets.toml → [env],[api],[geo],[openweather],[admin]")
+
 # ----------------------------------------------------------------------
 # Util: alerta prático (com base no dashboard do backend)
 # ----------------------------------------------------------------------
 def avaliar_alertas(d):
     """Gera lista de alertas a partir do payload de dashboard."""
-    if not d or "clima" not in d or "vegetacao" not in d: 
+    if not d or "clima" not in d or "vegetacao" not in d:
         return []
     clima = d["clima"]
     ndvi  = d["vegetacao"]
@@ -356,7 +432,7 @@ def avaliar_alertas(d):
     v = float(clima.get("vento", 0))
     et0 = float(clima.get("et0", 0))
     descr = str(clima.get("descricao","")).lower()
-    chuva_mm = 0.0  # se quiser, pode vir de outro endpoint depois
+    chuva_mm = 0.0  # placeholder para futuro
 
     alertas = []
 
@@ -370,7 +446,7 @@ def avaliar_alertas(d):
     if v >= 35:
         alertas.append(("alta", "💨 Ventos fortes — risco para pulverização e estruturas expostas."))
 
-    # Chuva forte (place-holder se disponível depois)
+    # Chuva forte (placeholder)
     if chuva_mm >= 20:
         alertas.append(("media", "🌧️ Chuva forte nas próximas horas — ajustar cronograma de colheita/aplicação."))
 
@@ -389,6 +465,34 @@ def avaliar_alertas(d):
         alertas.append(("media", "🏞️ Qualidade do ar ruim — considerar manejo de poeira/fumaça."))
 
     return alertas
+
+# ----------------------------------------------------------------------
+# Trend skeleton (pré-preditivo) — guarda últimas amostras da sessão
+# ----------------------------------------------------------------------
+def push_trend_samples(et0_val: float, ndvi_val: float):
+    ts = datetime.utcnow().timestamp()
+    st.session_state.trend["et0"].append(float(et0_val))
+    st.session_state.trend["ndvi"].append(float(ndvi_val))
+    st.session_state.trend["ts"].append(ts)
+    # mantém somente últimas 12 amostras
+    for k in ("et0","ndvi","ts"):
+        st.session_state.trend[k] = st.session_state.trend[k][-12:]
+
+def calc_trend_label():
+    et0 = st.session_state.trend["et0"]
+    ndv = st.session_state.trend["ndvi"]
+    if len(et0) < 4 or len(ndv) < 4:
+        return "Tendência: coletando dados…"
+    # slope simples: último - média dos anteriores
+    et0_slope = et0[-1] - sum(et0[:-1])/len(et0[:-1])
+    ndvi_slope = ndv[-1] - sum(ndv[:-1])/len(ndv[:-1])
+    if et0_slope > 0.3 and ndvi_slope < -0.02:
+        return "Tendência de risco hídrico ↑ (48h)"
+    if et0_slope > 0.2:
+        return "ET0 em alta (monitorar irrigação)"
+    if ndvi_slope < -0.02:
+        return "NDVI em queda (verificar campo)"
+    return "Tendência estável"
 
 # ----------------------------------------------------------------------
 # Seções (conteúdo)
@@ -412,10 +516,13 @@ def page_dashboard():
 
     st.markdown("---")
 
-    code, dash = api_request("GET", f"/dashboard/{lat}/{lon}", token=st.session_state.user_token)
+    with st.spinner("Carregando dashboard…"):
+        code, dash = cached_dashboard(lat, lon, st.session_state.user_token)
+
     if code == 200 and isinstance(dash, dict) and dash.get("status") == "success":
         data = dash["data"]
 
+        # KPIs principais
         k1, k2, k3, k4 = st.columns(4)
         with k1:
             st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
@@ -438,6 +545,11 @@ def page_dashboard():
                       delta=f"{data['rentabilidade']['produtividade_estimada']} sc/ha")
             st.markdown('</div>', unsafe_allow_html=True)
 
+        # Tendência (pré-preditivo, em cima de amostras da sessão)
+        push_trend_samples(data['clima']['et0'], data['vegetacao']['ndvi'])
+        st.markdown("##### 🔮 Tendência de Risco (esqueleto)")
+        st.info(calc_trend_label())
+
         st.markdown("---")
         st.markdown('#### ⚠️ Centro de Alertas Inteligentes')
         alerts = avaliar_alertas(data)
@@ -452,9 +564,16 @@ def page_dashboard():
 
 def page_clima():
     lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
-    code, dash = api_request("GET", f"/dashboard/{lat}/{lon}", token=st.session_state.user_token)
+    with st.spinner("Carregando clima…"):
+        code, dash = cached_dashboard(lat, lon, st.session_state.user_token)
     if code == 200 and isinstance(dash, dict) and dash.get("status") == "success":
         data = dash["data"]; clima = data["clima"]
+
+        # Sinais agronômicos derivados (sem tocar no backend)
+        T = float(clima['temperatura']); RH = float(clima['umidade'])
+        HI  = round(heat_index_c(T, RH), 1)
+        VPD = round(vpd_kpa(T, RH), 2)
+        THI = round(thi_cattle(T, RH), 1)
 
         st.subheader("🌤️ Climatologia de Precisão")
         c1,c2,c3,c4,c5 = st.columns(5)
@@ -463,6 +582,24 @@ def page_clima():
         with c3: st.write(f"**Vento:** {clima['vento']} km/h")
         with c4: st.write(f"**Pressão:** {clima['pressao']} hPa")
         with c5: st.write(f"**Condição:** {clima['descricao']}")
+
+        # KPIs de sinais
+        k1,k2,k3 = st.columns(3)
+        with k1:
+            st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+            st.metric("🌡️ Heat Index (°C)", HI, delta=class_heat_index(HI))
+            st.caption("Sensação de calor combinando T e UR.")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with k2:
+            st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+            st.metric("💨 VPD (kPa)", VPD, delta=class_vpd(VPD))
+            st.caption("0.8–1.2 ideal; >2.0 estresse hídrico.")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with k3:
+            st.markdown('<div class="ts-kpi">', unsafe_allow_html=True)
+            st.metric("🐄 THI (bovino)", THI, delta=class_thi(THI))
+            st.caption("Conforto térmico pecuária.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("##### 💧 Evapotranspiração (ET0)")
         fig = go.Figure(go.Indicator(
@@ -485,7 +622,8 @@ def page_clima():
 
 def page_vegetacao():
     lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
-    code, dash = api_request("GET", f"/dashboard/{lat}/{lon}", token=st.session_state.user_token)
+    with st.spinner("Carregando NDVI…"):
+        code, dash = cached_dashboard(lat, lon, st.session_state.user_token)
     if code == 200 and isinstance(dash, dict) and dash.get("status") == "success":
         v = dash["data"]["vegetacao"]
         st.subheader("🛰️ NDVI Executivo")
@@ -500,7 +638,8 @@ def page_vegetacao():
 
 def page_mercado():
     lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
-    code, dash = api_request("GET", f"/dashboard/{lat}/{lon}", token=st.session_state.user_token)
+    with st.spinner("Carregando mercado…"):
+        code, dash = cached_dashboard(lat, lon, st.session_state.user_token)
     if code == 200 and isinstance(dash, dict) and dash.get("status") == "success":
         com = dash["data"]["mercado"]
         st.subheader("📈 Mercado em Tempo Real (R$/saca)")
@@ -518,7 +657,8 @@ def page_mercado():
 
 def page_rent():
     lat = st.session_state.loc["lat"]; lon = st.session_state.loc["lon"]
-    code, dash = api_request("GET", f"/dashboard/{lat}/{lon}", token=st.session_state.user_token)
+    with st.spinner("Carregando rentabilidade…"):
+        code, dash = cached_dashboard(lat, lon, st.session_state.user_token)
     if code == 200 and isinstance(dash, dict) and dash.get("status") == "success":
         data = dash["data"]; mercado = data["mercado"]
 
@@ -547,9 +687,9 @@ def page_rent():
 # Renderização
 # ----------------------------------------------------------------------
 def home_logged_out():
-    # Hero (SVG na sua pasta assets/brand/)
+    # Hero (SVG na sua pasta assets/brand/) — corrige deprecation: use_container_width
     st.markdown('<div class="ts-hero">', unsafe_allow_html=True)
-    st.image("assets/brand/terrasynapse-hero-dark.svg", use_column_width=True)
+    st.image("assets/brand/terrasynapse-hero-dark.svg", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("### TerraSynapse V2.0 Enterprise")
@@ -581,7 +721,8 @@ def home_logged_out():
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown('<div class="strip">Crie sua conta executiva e tenha um cockpit unificado de clima, vegetação e mercado — pronto para decisão.</div>', unsafe_allow_html=True)
+    # CTA curto para login/cadastro (sidebar)
+    st.markdown('<div class="strip"><b>Pronto para começar?</b> Abra o menu lateral, faça <i>Login</i> ou <i>Cadastro</i> e acesse o cockpit executivo.</div>', unsafe_allow_html=True)
 
 # top bar e, se logado, navbar
 if st.session_state.logged_in:
