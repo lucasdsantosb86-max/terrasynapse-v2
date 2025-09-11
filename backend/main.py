@@ -1,7 +1,3 @@
-# TerraSynapse V2.2 Enterprise - Backend 100% Produção
-# OpenWeather real, Yahoo Finance, cache inteligente, logs estruturados
-# Otimizado para secrets.toml e disco de 1GB no Render
-
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -663,4 +659,3 @@ async def get_market_data_enterprise() -> dict:
                 change = 0.0
                 if prev_close and prev_close > 0:
                     change = ((price - prev_close) / prev_close) * 100
-                
