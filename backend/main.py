@@ -659,7 +659,7 @@ async def get_market_data_enterprise() -> dict:
                 change = 0.0
                 if prev_close and prev_close > 0:
                     change = ((price - prev_close) / prev_close) * 100
-return {
+                return {
                     "price": float(price),
                     "change": round(change, 2),
                     "volume": quote.get("regularMarketVolume", 0),
